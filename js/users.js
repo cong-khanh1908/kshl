@@ -509,7 +509,12 @@ async function gsPushAccountRequests() {
         r.doneAt ? new Date(r.doneAt).toLocaleString('vi-VN') : ''
       ])
     ];
-    await gsWriteRange('REQUESTS', 'A1', rows);
+    // Đảm bảo tab REQUESTS tồn tại
+    const tabs = await gsGetSheetsList().catch(() => []);
+    if (!tabs.includes('REQUESTS')) {
+      await gsEnsureTab('REQUESTS', ['ID','Loại','Họ tên','Tên đăng nhập','Liên hệ','Khoa/Phòng','Lý do','Ưu tiên','Trạng thái','Thời gian tạo','Thời gian xử lý']);
+    }
+    await gsWriteRange('REQUESTS!A1', rows);
   } catch(e) { /* silent */ }
 }
 
@@ -622,6 +627,16 @@ function openAccountRequest(type) {
   };
 
   openModal('modal-account-request');
+  // ★ FIX: Nếu gọi từ login screen, nâng z-index modal lên trên login-screen (z:9000)
+  const loginScreen = document.getElementById('login-screen');
+  const backdrop = document.getElementById('modal-account-request');
+  if (loginScreen && !loginScreen.classList.contains('hidden')) {
+    backdrop.style.zIndex = '9200';
+    backdrop.dataset.fromLogin = '1';
+  } else {
+    backdrop.style.zIndex = '';
+    backdrop.dataset.fromLogin = '0';
+  }
 }
 
 // ── Trạng thái step hiện tại ──

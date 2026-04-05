@@ -106,11 +106,17 @@ function showPage(name){
 // =========================================================
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){
-  document.getElementById(id).classList.remove('open');
+  const el = document.getElementById(id);
+  el.classList.remove('open');
+  // Reset z-index nếu modal được nâng lên từ login screen
+  if (el.dataset.fromLogin === '1') {
+    el.style.zIndex = '';
+    el.dataset.fromLogin = '0';
+  }
   // Re-enable username field when user modal closes
   if(id==='modal-user'){
-    const el=document.getElementById('mu-username');
-    if(el){el.disabled=false;el.placeholder='VD: nguyen_van_a';}
+    const uEl=document.getElementById('mu-username');
+    if(uEl){uEl.disabled=false;uEl.placeholder='VD: nguyen_van_a';}
     const pwEl=document.getElementById('mu-password');
     if(pwEl) pwEl.placeholder='Mật khẩu mới...';
   }

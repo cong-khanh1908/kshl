@@ -112,7 +112,7 @@ async function testSheets(){
     const d = await res.json();
     if (d.properties) {
       const tabs = (d.sheets||[]).map(s=>s.properties.title);
-      const needed = ['CONFIG','SURVEYS','USERS','DEPTS','HISTORY'];
+      const needed = ['CONFIG','SURVEYS','USERS','DEPTS','HISTORY','REQUESTS'];
       const missing = needed.filter(t=>!tabs.includes(t));
       el.innerHTML = `<span style="color:var(--success)">✅ Kết nối thành công: <b>${d.properties.title}</b><br>Tabs hiện có: ${tabs.join(', ')||'(trống)'}${missing.length?`<br><span style="color:var(--warning)">⚠️ Thiếu tabs: ${missing.join(', ')} → Nhấn "Tạo cấu trúc Sheets"</span>`:'<br>✅ Đủ cấu trúc 5 tabs'}</span>`;
       updateGSConnBadge(true);
@@ -178,7 +178,7 @@ function loadCfgToUI(){
 let historyCache = [];
 
 async function loadHistory() {
-  if (!gsBase()) { toast('Chưa cấu hình Sheets', 'warning'); return; }
+  if (!gsReady()) { toast('Chưa cấu hình Sheets', 'warning'); return; }
   toast('⏳ Đang tải lịch sử...', 'info');
   try {
     const rows = await gsReadRange(`${GS_TABS.HISTORY}!A1:E10000`);
@@ -392,14 +392,16 @@ async function gsInitSheets() {
     const usrHdr  = ['id','username','fullname','role','dept','password_hash'];
     const deptHdr = ['id','name','code','type'];
     const histHdr = ['timestamp','user','action','detail','device'];
+    const reqHdr  = ['ID','Loại','Họ tên','Tên đăng nhập','Liên hệ','Khoa/Phòng','Lý do','Ưu tiên','Trạng thái','Thời gian tạo','Thời gian xử lý'];
     await gsEnsureTab(GS_TABS.CONFIG,  cfgHdr);
     await gsEnsureTab(GS_TABS.SURVEYS, survHdr);
     await gsEnsureTab(GS_TABS.USERS,   usrHdr);
     await gsEnsureTab(GS_TABS.DEPTS,   deptHdr);
     await gsEnsureTab(GS_TABS.HISTORY, histHdr);
+    await gsEnsureTab('REQUESTS',      reqHdr);
     if (el) el.innerHTML = '✅ Tạo cấu trúc thành công! Sẵn sàng đồng bộ.';
-    toast('✅ Đã tạo cấu trúc Sheets (5 tabs)', 'success');
-    gsLogHistory('init_sheets', 'Tạo cấu trúc Sheets thành công');
+    toast('✅ Đã tạo cấu trúc Sheets (6 tabs)', 'success');
+    gsLogHistory('init_sheets', 'Tạo cấu trúc Sheets thành công (6 tabs: CONFIG, SURVEYS, USERS, DEPTS, HISTORY, REQUESTS)');
     updateGSConnBadge(true);
   } catch(e) {
     if (el) el.innerHTML = `❌ Lỗi: ${e.message}`;

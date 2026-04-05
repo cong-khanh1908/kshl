@@ -452,7 +452,7 @@ table.data-table tbody td{padding:10px 14px;color:var(--text2);font-size:12.5px;
 
 /* MODAL */
 .modal-backdrop{
-  position:fixed;inset:0;background:rgba(10,20,50,.6);z-index:1000;
+  position:fixed;inset:0;background:rgba(10,20,50,.6);z-index:9100;
   display:none;align-items:flex-end;justify-content:center;
   backdrop-filter:blur(3px);
 }
