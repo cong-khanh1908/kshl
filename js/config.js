@@ -17,7 +17,7 @@ const SA_DEFAULT = {
 // → Tất cả thiết bị mới mở app sẽ tự kết nối mà KHÔNG cần nhập lại
 // Ví dụ: const SHEETID_DEFAULT = '1lDISGhLVAkUussZMtU9HqFYVYp4H...';
 // =========================================================
-const SHEETID_DEFAULT = '1lDlSGhLVAkUussZMtU9HqFYVYp4HNOj3DBl5ATkbWrw'; // ← ADMIN ĐIỀN VÀO ĐÂY
+const SHEETID_DEFAULT = ''; // ← ADMIN ĐIỀN VÀO ĐÂY
 
 // ★ FIX MOBILE: Đọc ?sid= từ URL TRƯỚC KHI đọc localStorage
 // → Khi admin gửi link có ?sid=..., mobile tự kết nối ngay lần đầu

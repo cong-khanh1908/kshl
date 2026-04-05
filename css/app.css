@@ -812,3 +812,80 @@ table.data-table tbody td{padding:10px 14px;color:var(--text2);font-size:12.5px;
   .bs-title { font-size: 20px; }
   #bs-sheetid { font-size: 14px !important; }
 }
+
+
+/* ===================================================
+   ACCOUNT REQUEST – v3 Nâng Cấp
+   =================================================== */
+
+/* Step indicator animation */
+.acct-step {
+  transition: background .25s, color .25s;
+  cursor: default;
+  user-select: none;
+}
+
+/* Urgent request badge */
+.req-item.req-urgent {
+  border-left: 3px solid #E53935 !important;
+}
+.req-item.req-urgent .req-item-icon::after {
+  content: '🔴';
+  font-size: 10px;
+  vertical-align: super;
+}
+
+/* Modal header dynamic border */
+#acct-req-modal-header {
+  transition: border-bottom-color .2s;
+}
+
+/* Preview table in step 2 */
+#acct-req-preview table tr td:first-child {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Reset: form focus highlights */
+#acct-req-username:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(13,71,161,.12);
+}
+
+/* Urgency radio labels */
+#urgency-normal-lbl, #urgency-urgent-lbl {
+  transition: border-color .2s, background .2s;
+}
+#urgency-normal-lbl:hover { border-color: var(--success); }
+#urgency-urgent-lbl:hover { border-color: #E53935; }
+
+/* Step 3 success pulse */
+#acct-req-step3 > div:first-child {
+  display: inline-block;
+}
+@keyframes successPulse {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+#acct-req-step3 > div:first-child {
+  animation: loginAppear .4s ease, successPulse .6s ease .4s;
+}
+
+/* Contact valid highlight */
+#acct-req-contact:valid {
+  border-color: var(--success);
+}
+
+/* Datalist input styling */
+#acct-req-dept {
+  cursor: text;
+}
+
+/* Smooth transitions for req items */
+.req-item {
+  transition: opacity .2s, transform .15s;
+}
+.req-item.req-done {
+  opacity: .72;
+}

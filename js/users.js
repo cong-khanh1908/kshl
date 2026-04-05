@@ -478,7 +478,7 @@ function loadSampleDepts(){
 }
 
 // =========================================================
-// ACCOUNT REQUESTS SYSTEM
+// ACCOUNT REQUESTS SYSTEM – v3 Nâng Cấp
 // =========================================================
 const ACCT_REQUESTS_KEY = 'kshl_v4_acct_requests';
 
@@ -487,33 +487,279 @@ function getAccountRequests() {
 }
 function saveAccountRequests(reqs) {
   localStorage.setItem(ACCT_REQUESTS_KEY, JSON.stringify(reqs));
+  // Đồng bộ lên Cloud nền nếu có kết nối
+  if (navigator.onLine && gsReady()) {
+    gsPushAccountRequests().catch(() => {});
+  }
 }
 
-function openAccountRequest(type) {
-  document.getElementById('acct-req-type').value = type;
-  document.getElementById('acct-req-fullname').value = '';
-  document.getElementById('acct-req-username').value = '';
-  document.getElementById('acct-req-contact').value = '';
-  document.getElementById('acct-req-dept').value = '';
-  document.getElementById('acct-req-note').value = '';
-  document.getElementById('acct-req-err').style.display = 'none';
+// ── Đẩy danh sách yêu cầu lên tab REQUESTS trên Google Sheets ──
+async function gsPushAccountRequests() {
+  const reqs = getAccountRequests();
+  if (!reqs.length) return;
+  try {
+    const rows = [
+      ['ID','Loại','Họ tên','Tên đăng nhập','Liên hệ','Khoa/Phòng','Lý do','Ưu tiên','Trạng thái','Thời gian tạo','Thời gian xử lý'],
+      ...reqs.map(r => [
+        r.id, r.type==='new'?'Cấp mới':'Reset MK',
+        r.fullname, r.username||'', r.contact,
+        r.dept||'', r.note||'', r.urgency==='urgent'?'Gấp':'Bình thường',
+        r.status==='pending'?'Chờ xử lý':r.status==='done'?'Đã xử lý':'Từ chối',
+        new Date(r.createdAt).toLocaleString('vi-VN'),
+        r.doneAt ? new Date(r.doneAt).toLocaleString('vi-VN') : ''
+      ])
+    ];
+    await gsWriteRange('REQUESTS', 'A1', rows);
+  } catch(e) { /* silent */ }
+}
 
-  const badgeEl = document.getElementById('acct-req-type-badge');
-  const titleEl = document.getElementById('acct-req-title');
-  const unameGroup = document.getElementById('acct-req-username-group');
+// ── Kéo yêu cầu từ Cloud về (admin trên thiết bị khác có thể xem) ──
+async function gsPullAccountRequests() {
+  try {
+    const data = await gsReadRange('REQUESTS!A2:K');
+    if (!data || !data.length) return;
+    const existing = getAccountRequests();
+    const existIds = new Set(existing.map(r => r.id));
+    let added = 0;
+    data.forEach(row => {
+      if (!row[0] || existIds.has(row[0])) return;
+      existing.unshift({
+        id: row[0],
+        type: row[1]==='Cấp mới'?'new':'reset',
+        fullname: row[2]||'',
+        username: row[3]||'',
+        contact: row[4]||'',
+        dept: row[5]||'',
+        note: row[6]||'',
+        urgency: row[7]==='Gấp'?'urgent':'normal',
+        status: row[8]==='Đã xử lý'?'done':row[8]==='Từ chối'?'rejected':'pending',
+        createdAt: row[9]||new Date().toISOString(),
+        doneAt: row[10]||null
+      });
+      added++;
+    });
+    if (added) { localStorage.setItem(ACCT_REQUESTS_KEY, JSON.stringify(existing)); }
+  } catch(e) { /* silent */ }
+}
+
+// ── Mở modal theo loại ──
+function openAccountRequest(type) {
+  // Reset về step 1
+  _acctReqCurrentStep = 1;
+  _acctReqValid = false;
+  acctReqGoStep(1);
+
+  document.getElementById('acct-req-type').value = type;
+  // Clear form
+  ['acct-req-fullname','acct-req-username','acct-req-contact','acct-req-dept','acct-req-note'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  document.querySelectorAll('input[name="acct-req-urgency"]').forEach(r => { r.checked = r.value === 'normal'; });
+  document.getElementById('acct-req-err').style.display = 'none';
+  document.getElementById('acct-req-uname-ok').style.display = 'none';
+  document.getElementById('acct-req-note-counter').textContent = '0/300 ký tự';
+
+  const header = document.getElementById('acct-req-modal-header');
+  const badge = document.getElementById('acct-req-type-badge');
+  const icon = document.getElementById('acct-req-header-icon');
+  const title = document.getElementById('acct-req-title');
+  const sub = document.getElementById('acct-req-header-sub');
+  const unameGrp = document.getElementById('acct-req-username-group');
+  const urgGrp = document.getElementById('acct-req-urgency-group');
+  const noteLabel = document.getElementById('acct-req-note-label');
+  const btnNext = document.getElementById('acct-req-btn-next-label');
 
   if (type === 'new') {
-    titleEl.textContent = '📋 Yêu cầu cấp tài khoản mới';
-    badgeEl.textContent = '📋 Bạn chưa có tài khoản và muốn được cấp tài khoản để nhập phiếu khảo sát.';
-    badgeEl.style.background = '#E8F0FE'; badgeEl.style.color = '#0D47A1'; badgeEl.style.borderColor = '#BBDEFB';
-    unameGroup.style.display = '';
+    header.style.borderBottomColor = '#1565C0';
+    icon.textContent = '📋';
+    title.textContent = 'Yêu cầu cấp tài khoản mới';
+    sub.textContent = 'Admin sẽ tạo tài khoản và thông báo cho bạn';
+    badge.innerHTML = `<div style="display:flex;gap:10px;align-items:flex-start;">
+      <span style="font-size:22px;flex-shrink:0;">📋</span>
+      <div><b>Cấp tài khoản mới:</b> Dành cho nhân viên y tế chưa có tài khoản trong hệ thống. Điền đầy đủ thông tin để Admin xét duyệt và cấp tài khoản sớm nhất.</div>
+    </div>`;
+    badge.style.cssText = 'background:#E3F2FD;color:#0D47A1;border-color:#90CAF9;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12.5px;border:1.5px solid;';
+    unameGrp.style.display = '';
+    urgGrp.style.display = '';
+    noteLabel.textContent = '📝 Lý do cần tài khoản / Ghi chú thêm';
+    btnNext.textContent = 'Xem lại →';
+    document.getElementById('acct-req-note').placeholder = 'VD: Tôi là điều dưỡng khoa Nội, cần nhập phiếu khảo sát hài lòng...';
   } else {
-    titleEl.textContent = '🔑 Yêu cầu reset mật khẩu';
-    badgeEl.textContent = '🔑 Bạn đã có tài khoản nhưng quên mật khẩu. Admin sẽ reset về mật khẩu tạm thời.';
-    badgeEl.style.background = '#FFF8E1'; badgeEl.style.color = '#E65100'; badgeEl.style.borderColor = '#FFE082';
-    unameGroup.style.display = '';
+    header.style.borderBottomColor = '#E65100';
+    icon.textContent = '🔑';
+    title.textContent = 'Yêu cầu reset mật khẩu';
+    sub.textContent = 'Quên mật khẩu – Admin sẽ cấp mật khẩu tạm thời';
+    badge.innerHTML = `<div style="display:flex;gap:10px;align-items:flex-start;">
+      <span style="font-size:22px;flex-shrink:0;">🔑</span>
+      <div><b>Quên mật khẩu:</b> Bạn đã có tài khoản nhưng không nhớ mật khẩu. Admin sẽ reset về mật khẩu tạm thời <b>BV@2024</b>, sau đó bạn cần đổi lại mật khẩu.</div>
+    </div>`;
+    badge.style.cssText = 'background:#FFF8E1;color:#E65100;border-color:#FFE082;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12.5px;border:1.5px solid;';
+    unameGrp.style.display = '';
+    urgGrp.style.display = 'none';
+    noteLabel.textContent = '📝 Mô tả thêm (không bắt buộc)';
+    btnNext.textContent = 'Xem lại →';
+    document.getElementById('acct-req-note').placeholder = 'VD: Tôi quên mật khẩu sau kỳ nghỉ lễ, tài khoản nguyenvanb...';
+    // Ẩn ô mật khẩu yêu cầu cho reset
+    const unameLabel = document.querySelector('#acct-req-username-group .form-label');
+    if (unameLabel) unameLabel.innerHTML = '🔤 Tên đăng nhập tài khoản của bạn <span class="req">*</span>';
   }
+
+  // Populate dept datalist
+  const dl = document.getElementById('acct-req-dept-list');
+  if (dl) {
+    dl.innerHTML = '';
+    (DEPTS || []).forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.name;
+      dl.appendChild(opt);
+    });
+  }
+  // Ghi chú counter
+  const noteEl = document.getElementById('acct-req-note');
+  noteEl.oninput = function() {
+    document.getElementById('acct-req-note-counter').textContent = `${this.value.length}/300 ký tự`;
+    if (this.value.length > 300) this.value = this.value.slice(0, 300);
+  };
+
   openModal('modal-account-request');
+}
+
+// ── Trạng thái step hiện tại ──
+let _acctReqCurrentStep = 1;
+let _acctReqValid = false;
+
+function acctReqGoStep(step) {
+  _acctReqCurrentStep = step;
+  // Update step indicators
+  [1,2,3].forEach(s => {
+    const stepEl = document.getElementById(`acct-step-${s}`);
+    if (!stepEl) return;
+    if (s < step) {
+      stepEl.style.background = '#C8E6C9'; stepEl.style.color = '#2E7D32';
+    } else if (s === step) {
+      const type = document.getElementById('acct-req-type')?.value || 'new';
+      stepEl.style.background = type === 'new' ? '#E3F2FD' : '#FFF8E1';
+      stepEl.style.color = type === 'new' ? '#1565C0' : '#E65100';
+    } else {
+      stepEl.style.background = 'var(--surface2)'; stepEl.style.color = 'var(--text3)';
+    }
+  });
+  // Show/hide panels
+  document.getElementById('acct-req-step1').style.display = step === 1 ? '' : 'none';
+  document.getElementById('acct-req-step2').style.display = step === 2 ? '' : 'none';
+  document.getElementById('acct-req-step3').style.display = step === 3 ? '' : 'none';
+  // Footer buttons
+  const cancelBtn = document.getElementById('acct-req-btn-cancel');
+  const nextBtn = document.getElementById('acct-req-btn-next');
+  const nextLabel = document.getElementById('acct-req-btn-next-label');
+  if (step === 1) {
+    cancelBtn.style.display = '';
+    cancelBtn.textContent = 'Hủy';
+    nextBtn.style.display = '';
+    nextLabel.textContent = 'Xem lại →';
+    nextBtn.className = 'btn btn-primary';
+  } else if (step === 2) {
+    cancelBtn.style.display = '';
+    cancelBtn.textContent = '← Sửa lại';
+    cancelBtn.onclick = () => acctReqGoStep(1);
+    nextBtn.style.display = '';
+    nextLabel.textContent = '📤 Xác nhận gửi';
+    nextBtn.className = 'btn btn-success';
+  } else {
+    cancelBtn.style.display = 'none';
+    nextBtn.style.display = '';
+    nextLabel.textContent = '✓ Đóng';
+    nextBtn.className = 'btn btn-primary';
+    nextBtn.onclick = () => { closeModal('modal-account-request'); nextBtn.onclick = acctReqNextStep; };
+  }
+}
+
+function acctReqNextStep() {
+  if (_acctReqCurrentStep === 1) {
+    if (!acctReqValidateStep1()) return;
+    acctReqBuildPreview();
+    acctReqGoStep(2);
+  } else if (_acctReqCurrentStep === 2) {
+    submitAccountRequest();
+  }
+}
+
+function acctReqValidateStep1() {
+  const type = document.getElementById('acct-req-type').value;
+  const fullname = document.getElementById('acct-req-fullname').value.trim();
+  const username = document.getElementById('acct-req-username').value.trim();
+  const contact = document.getElementById('acct-req-contact').value.trim();
+  const errEl = document.getElementById('acct-req-err');
+
+  const showErr = (msg) => {
+    errEl.innerHTML = `⚠️ ${msg}`;
+    errEl.style.display = 'block';
+    errEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return false;
+  };
+  errEl.style.display = 'none';
+
+  if (!fullname || fullname.length < 3) return showErr('Vui lòng nhập họ tên đầy đủ (tối thiểu 3 ký tự)');
+
+  if (!username) return showErr('Vui lòng nhập tên đăng nhập');
+  if (username.length < 4) return showErr('Tên đăng nhập tối thiểu 4 ký tự');
+  if (!/^[a-z0-9_]+$/.test(username)) return showErr('Tên đăng nhập chỉ dùng chữ thường không dấu, số và dấu gạch dưới (_)');
+
+  if (!contact) return showErr('Vui lòng nhập số điện thoại hoặc email để Admin liên hệ');
+  if (contact.length < 8) return showErr('Số điện thoại / email không hợp lệ (quá ngắn)');
+
+  // Kiểm tra tên đăng nhập trùng (cho cấp mới)
+  if (type === 'new') {
+    if (USERS.find(u => u.username === username)) {
+      return showErr(`Tên đăng nhập "<b>${username}</b>" đã tồn tại trong hệ thống. Vui lòng chọn tên khác hoặc liên hệ Admin.`);
+    }
+  }
+  // Kiểm tra tài khoản tồn tại (cho reset)
+  if (type === 'reset') {
+    if (!USERS.find(u => u.username === username)) {
+      return showErr(`Không tìm thấy tài khoản "<b>${username}</b>" trong hệ thống. Kiểm tra lại tên đăng nhập hoặc yêu cầu cấp tài khoản mới.`);
+    }
+  }
+  // Kiểm tra yêu cầu trùng (chưa xử lý)
+  const existing = getAccountRequests();
+  const dup = existing.find(r => r.username === username && r.type === type && r.status === 'pending');
+  if (dup) {
+    return showErr(`Đã có yêu cầu ${type==='new'?'cấp tài khoản':'reset mật khẩu'} cho tên đăng nhập "<b>${username}</b>" đang chờ xử lý. Admin chưa xử lý yêu cầu trước đó.`);
+  }
+
+  return true;
+}
+
+function acctReqBuildPreview() {
+  const type = document.getElementById('acct-req-type').value;
+  const fullname = document.getElementById('acct-req-fullname').value.trim();
+  const username = document.getElementById('acct-req-username').value.trim();
+  const contact = document.getElementById('acct-req-contact').value.trim();
+  const dept = document.getElementById('acct-req-dept').value.trim();
+  const note = document.getElementById('acct-req-note').value.trim();
+  const urgency = document.querySelector('input[name="acct-req-urgency"]:checked')?.value || 'normal';
+  const isNew = type === 'new';
+
+  const preview = document.getElementById('acct-req-preview');
+  preview.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:10px;border-bottom:1.5px solid var(--border);">
+      <span style="font-size:20px;">${isNew?'📋':'🔑'}</span>
+      <div>
+        <div style="font-weight:800;font-size:14px;color:${isNew?'#1565C0':'#E65100'};">${isNew?'Yêu cầu cấp tài khoản mới':'Yêu cầu reset mật khẩu'}</div>
+        <div style="font-size:10.5px;color:var(--text3);">Vui lòng kiểm tra thông tin trước khi gửi</div>
+      </div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+      <tr><td style="padding:5px 0;color:var(--text3);width:40%;">👤 Họ tên:</td><td style="font-weight:700;">${fullname}</td></tr>
+      <tr><td style="padding:5px 0;color:var(--text3);">🔤 Tên đăng nhập:</td><td><code style="background:#F0F4FF;padding:2px 7px;border-radius:4px;font-size:12px;">${username}</code></td></tr>
+      <tr><td style="padding:5px 0;color:var(--text3);">📞 Liên hệ:</td><td style="font-weight:700;color:var(--primary);">${contact}</td></tr>
+      ${dept ? `<tr><td style="padding:5px 0;color:var(--text3);">🏬 Khoa/Phòng:</td><td>${dept}</td></tr>` : ''}
+      ${isNew && urgency==='urgent' ? `<tr><td style="padding:5px 0;color:var(--text3);">⏰ Ưu tiên:</td><td><span style="color:#E53935;font-weight:700;">🔴 Gấp / Khẩn</span></td></tr>` : ''}
+      ${note ? `<tr><td style="padding:5px 0;color:var(--text3);vertical-align:top;">📝 Ghi chú:</td><td style="font-style:italic;">${note}</td></tr>` : ''}
+    </table>
+    ${isNew ? `<div style="margin-top:12px;padding:8px 12px;background:#E8F5E9;border-radius:7px;font-size:11.5px;color:#2E7D32;">✅ Sau khi Admin tạo tài khoản, mật khẩu mặc định ban đầu là <b>BV@2024</b>. Bạn cần đổi mật khẩu sau khi đăng nhập lần đầu.</div>`
+      : `<div style="margin-top:12px;padding:8px 12px;background:#FFF3E0;border-radius:7px;font-size:11.5px;color:#E65100;">🔑 Admin sẽ reset mật khẩu tài khoản <b>${username}</b> về <b>BV@2024</b>. Vui lòng đổi mật khẩu ngay sau khi đăng nhập.</div>`}
+  `;
 }
 
 function submitAccountRequest() {
@@ -523,45 +769,138 @@ function submitAccountRequest() {
   const contact = document.getElementById('acct-req-contact').value.trim();
   const dept = document.getElementById('acct-req-dept').value.trim();
   const note = document.getElementById('acct-req-note').value.trim();
-  const errEl = document.getElementById('acct-req-err');
-
-  if (!fullname) { errEl.textContent = '⚠️ Vui lòng nhập họ tên'; errEl.style.display = 'block'; return; }
-  if (!contact) { errEl.textContent = '⚠️ Vui lòng nhập SĐT/email liên hệ'; errEl.style.display = 'block'; return; }
-  if (!username) { errEl.textContent = '⚠️ Vui lòng nhập tên đăng nhập'; errEl.style.display = 'block'; return; }
+  const urgency = document.querySelector('input[name="acct-req-urgency"]:checked')?.value || 'normal';
 
   const reqs = getAccountRequests();
   const req = {
-    id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     type,
     fullname,
     username,
     contact,
     dept,
     note,
+    urgency,
     createdAt: new Date().toISOString(),
-    status: 'pending' // pending | done | rejected
+    doneAt: null,
+    status: 'pending'
   };
   reqs.unshift(req);
   saveAccountRequests(reqs);
 
-  closeModal('modal-account-request');
-  // Show success message
-  const box = document.querySelector('.login-box');
-  const info = document.createElement('div');
-  info.style.cssText = 'margin-top:12px;padding:12px 14px;background:#E8F5E9;border-radius:10px;border:1.5px solid #A5D6A7;font-size:13px;color:#2E7D32;text-align:center;animation:loginAppear .3s ease;';
-  info.innerHTML = `✅ <b>Đã gửi yêu cầu!</b><br>Admin sẽ xem xét và liên hệ lại theo: <b>${contact}</b>`;
-  const existInfo = document.getElementById('req-success-info');
-  if (existInfo) existInfo.remove();
-  info.id = 'req-success-info';
-  document.getElementById('login-staff-form').appendChild(info);
-  setTimeout(() => info.remove(), 6000);
+  // Cập nhật done message
+  const doneMsg = document.getElementById('acct-req-done-msg');
+  if (doneMsg) {
+    doneMsg.innerHTML = type === 'new'
+      ? `Yêu cầu cấp tài khoản cho <b>${fullname}</b><br>Admin sẽ liên hệ qua: <b style="color:var(--primary);">${contact}</b>`
+      : `Yêu cầu reset mật khẩu tài khoản <b>${username}</b><br>Admin sẽ liên hệ qua: <b style="color:var(--primary);">${contact}</b>`;
+  }
+
+  // Chuyển sang step 3
+  acctReqGoStep(3);
 }
 
+// ── Auto-generate username từ họ tên ──
+function acctReqAutoUsername(fullname) {
+  const type = document.getElementById('acct-req-type')?.value;
+  const hint = document.getElementById('acct-req-fullname-hint');
+  if (!fullname || fullname.length < 3) { if(hint) hint.style.display='none'; return; }
+
+  const parts = fullname.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d')
+    .split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return;
+  const lastName = parts[parts.length - 1];
+  const initials = parts.slice(0, -1).map(p => p[0]).join('');
+  const suggested = `${lastName}_${initials}`;
+
+  const unameEl = document.getElementById('acct-req-username');
+  if (unameEl && !unameEl.value) {
+    unameEl.value = suggested;
+    acctReqValidateUsername(suggested);
+  }
+  if (hint) {
+    hint.innerHTML = `💡 Gợi ý: tên đăng nhập từ họ tên của bạn`;
+    hint.style.display = '';
+    hint.style.color = 'var(--text3)';
+  }
+}
+
+// ── Validate username realtime ──
+function acctReqValidateUsername(val) {
+  const hint = document.getElementById('acct-req-uname-hint');
+  const ok = document.getElementById('acct-req-uname-ok');
+  const type = document.getElementById('acct-req-type')?.value;
+  if (!val) { if(hint) hint.style.color='var(--text3)'; if(ok) ok.style.display='none'; return; }
+  if (!/^[a-z0-9_]+$/.test(val)) {
+    if(hint) { hint.textContent='⚠️ Chỉ dùng chữ thường không dấu, số và dấu gạch dưới (_)'; hint.style.color='#E53935'; }
+    if(ok) ok.style.display='none';
+  } else if (val.length < 4) {
+    if(hint) { hint.textContent=`⚠️ Cần tối thiểu 4 ký tự (hiện ${val.length})`; hint.style.color='#F57C00'; }
+    if(ok) ok.style.display='none';
+  } else {
+    const exists = USERS.find(u => u.username === val);
+    if (type === 'new' && exists) {
+      if(hint) { hint.textContent=`❌ Tên đăng nhập "${val}" đã tồn tại`; hint.style.color='#E53935'; }
+      if(ok) ok.style.display='none';
+    } else if (type === 'reset' && !exists) {
+      if(hint) { hint.textContent=`⚠️ Không tìm thấy tài khoản "${val}" – kiểm tra lại chính tả`; hint.style.color='#F57C00'; }
+      if(ok) ok.style.display='none';
+    } else {
+      if(hint) {
+        hint.textContent = type === 'reset' ? `✅ Tìm thấy tài khoản "${val}"` : `✅ Tên đăng nhập hợp lệ`;
+        hint.style.color='var(--success,#2E7D32)';
+      }
+      if(ok) ok.style.display='';
+    }
+  }
+}
+
+// ── Validate contact realtime ──
+function acctReqValidateContact(val) {
+  const hint = document.getElementById('acct-req-contact-hint');
+  if (!hint) return;
+  if (!val) { hint.style.display='none'; return; }
+  const isPhone = /^0[0-9]{8,9}$/.test(val.replace(/\s/g,''));
+  const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+  if (isPhone) {
+    hint.textContent='✅ Số điện thoại hợp lệ'; hint.style.color='var(--success)'; hint.style.display='';
+  } else if (isEmail) {
+    hint.textContent='✅ Email hợp lệ'; hint.style.color='var(--success)'; hint.style.display='';
+  } else if (val.length > 5) {
+    hint.textContent='ℹ️ Nhập SĐT (VD: 0901234567) hoặc email hợp lệ'; hint.style.color='var(--text3)'; hint.style.display='';
+  } else {
+    hint.style.display='none';
+  }
+}
+
+// ── Thay đổi mức ưu tiên ──
+function acctReqUrgencyChange(val) {
+  const normalLbl = document.getElementById('urgency-normal-lbl');
+  const urgentLbl = document.getElementById('urgency-urgent-lbl');
+  if (normalLbl) normalLbl.style.borderColor = val==='normal'?'var(--success)':'var(--border)';
+  if (urgentLbl) urgentLbl.style.borderColor = val==='urgent'?'#E53935':'var(--border)';
+}
+
+// =========================================================
+// ADMIN: RENDER YÊU CẦU TÀI KHOẢN
+// =========================================================
 function renderAccountRequests() {
   const bodyEl = document.getElementById('acct-requests-body');
   if (!bodyEl) return;
+
+  // Pull từ Cloud trước nếu có kết nối
+  if (navigator.onLine && gsReady()) {
+    gsPullAccountRequests().then(() => _renderAccountRequestsHTML()).catch(() => _renderAccountRequestsHTML());
+  } else {
+    _renderAccountRequestsHTML();
+  }
+}
+
+function _renderAccountRequestsHTML() {
+  const bodyEl = document.getElementById('acct-requests-body');
+  if (!bodyEl) return;
   const reqs = getAccountRequests();
-  const pending = reqs.filter(r => r.status === 'pending');
 
   updateReqBadge();
 
@@ -570,52 +909,76 @@ function renderAccountRequests() {
     return;
   }
 
+  // Nhóm: pending trước, sau đó done/rejected
+  const pending = reqs.filter(r => r.status === 'pending');
+  const processed = reqs.filter(r => r.status !== 'pending');
+
   let html = '';
-  reqs.forEach(req => {
-    const isNew = req.type === 'new';
-    const typeLabel = isNew ? '📋 Cấp tài khoản mới' : '🔑 Reset mật khẩu';
-    const statusBadge = req.status === 'pending'
-      ? '<span class="chip chip-orange">⏳ Chờ xử lý</span>'
-      : req.status === 'done'
-        ? '<span class="chip chip-green">✅ Đã xử lý</span>'
-        : '<span style="background:#FFEBEE;color:#B71C1C;font-size:11px;padding:2px 8px;border-radius:10px;">❌ Từ chối</span>';
-    const d = new Date(req.createdAt).toLocaleString('vi-VN');
-    html += `<div class="req-item req-${isNew?'new':'reset'}${req.status==='done'?' req-done':''}">
-      <div class="req-item-icon">${isNew?'📋':'🔑'}</div>
-      <div class="req-item-body">
-        <div class="req-item-title">${typeLabel} – ${req.fullname} ${statusBadge}</div>
-        <div class="req-item-meta">
-          🕐 ${d}<br>
-          👤 Tên đăng nhập: <b>${req.username||'—'}</b> &nbsp;|&nbsp; 📞 Liên hệ: <b>${req.contact}</b>
-          ${req.dept ? `<br>🏬 Khoa/Phòng: ${req.dept}` : ''}
-          ${req.note ? `<br>📝 Ghi chú: ${req.note}` : ''}
-        </div>
-        ${req.status==='pending' ? `<div class="req-item-actions">
-          ${isNew ? `<button class="btn btn-primary btn-xs" onclick="approveNewAccount('${req.id}')">✅ Tạo tài khoản</button>` : ''}
-          ${!isNew ? `<button class="btn btn-warning btn-xs" onclick="approveResetRequest('${req.id}')">🔑 Reset MK → BV@2024</button>` : ''}
-          <button class="btn btn-outline btn-xs" onclick="rejectRequest('${req.id}')">❌ Từ chối</button>
-          <button class="btn btn-danger btn-xs" onclick="deleteRequest('${req.id}')">🗑️</button>
-        </div>` : `<div class="req-item-actions"><button class="btn btn-danger btn-xs" onclick="deleteRequest('${req.id}')">🗑️ Xóa</button></div>`}
-      </div>
+  if (pending.length) {
+    html += `<div style="font-size:10.5px;font-weight:700;color:var(--warning,#E65100);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+      <span style="background:#FF6F00;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;">${pending.length}</span> Đang chờ xử lý
     </div>`;
-  });
+    pending.forEach(req => { html += _reqItemHTML(req); });
+  }
+  if (processed.length) {
+    html += `<div style="font-size:10.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;margin:14px 0 8px;">Đã xử lý (${processed.length})</div>`;
+    processed.forEach(req => { html += _reqItemHTML(req); });
+  }
   bodyEl.innerHTML = html;
+}
+
+function _reqItemHTML(req) {
+  const isNew = req.type === 'new';
+  const typeLabel = isNew ? '📋 Cấp tài khoản mới' : '🔑 Reset mật khẩu';
+  const urgentTag = req.urgency === 'urgent' ? '<span style="background:#FFEBEE;color:#C62828;font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;border:1px solid #EF9A9A;">🔴 Khẩn</span>' : '';
+  const statusBadge = req.status === 'pending'
+    ? '<span class="chip chip-orange">⏳ Chờ xử lý</span>'
+    : req.status === 'done'
+      ? '<span class="chip chip-green">✅ Đã xử lý</span>'
+      : '<span style="background:#FFEBEE;color:#B71C1C;font-size:11px;padding:2px 8px;border-radius:10px;">❌ Từ chối</span>';
+  const d = new Date(req.createdAt).toLocaleString('vi-VN');
+  const doneInfo = req.doneAt ? `<br>🕐 Xử lý lúc: ${new Date(req.doneAt).toLocaleString('vi-VN')}` : '';
+  return `<div class="req-item req-${isNew?'new':'reset'}${req.status!=='pending'?' req-done':''}${req.urgency==='urgent'?' req-urgent':''}">
+    <div class="req-item-icon">${isNew?'📋':'🔑'}</div>
+    <div class="req-item-body">
+      <div class="req-item-title">${typeLabel} ${urgentTag} – <b>${req.fullname}</b> ${statusBadge}</div>
+      <div class="req-item-meta">
+        🕐 Gửi lúc: ${d}${doneInfo}<br>
+        🔤 Tên đăng nhập: <code style="background:#F0F4FF;padding:1px 6px;border-radius:4px;">${req.username||'—'}</code>
+        &nbsp;|&nbsp; 📞 <b>${req.contact}</b>
+        ${req.dept ? `<br>🏬 Khoa/Phòng: <i>${req.dept}</i>` : ''}
+        ${req.note ? `<br>📝 <i>${req.note}</i>` : ''}
+      </div>
+      ${req.status === 'pending' ? `<div class="req-item-actions">
+        ${isNew ? `<button class="btn btn-primary btn-xs" onclick="approveNewAccount('${req.id}')">✅ Tạo tài khoản</button>` : ''}
+        ${!isNew ? `<button class="btn btn-warning btn-xs" onclick="approveResetRequest('${req.id}')">🔑 Reset → BV@2024</button>` : ''}
+        <button class="btn btn-outline btn-xs" onclick="rejectRequest('${req.id}')">❌ Từ chối</button>
+        <button class="btn btn-danger btn-xs" onclick="deleteRequest('${req.id}')" title="Xóa yêu cầu">🗑️</button>
+      </div>` : `<div class="req-item-actions"><button class="btn btn-danger btn-xs" onclick="deleteRequest('${req.id}')">🗑️ Xóa</button></div>`}
+    </div>
+  </div>`;
 }
 
 function updateReqBadge() {
   const reqs = getAccountRequests();
   const pendingCount = reqs.filter(r => r.status === 'pending').length;
+  const urgentCount = reqs.filter(r => r.status === 'pending' && r.urgency === 'urgent').length;
   const badge = document.getElementById('req-badge');
   const navBadge = document.getElementById('reqBadgeNav');
   [badge, navBadge].forEach(b => {
     if (!b) return;
     b.textContent = pendingCount;
     b.style.display = pendingCount > 0 ? '' : 'none';
+    if (urgentCount > 0) { b.style.background = '#E53935'; b.title = `${urgentCount} yêu cầu khẩn`; }
+    else { b.style.background = 'var(--accent2)'; b.title = ''; }
   });
-  // Update topbar notification
   const topBtn = document.getElementById('topbar-req-btn');
   const topCount = document.getElementById('topbar-req-count');
-  if (topBtn) { topBtn.style.display = pendingCount > 0 ? 'inline-flex' : 'none'; }
+  if (topBtn) {
+    topBtn.style.display = pendingCount > 0 ? 'inline-flex' : 'none';
+    if (urgentCount > 0) { topBtn.style.background = '#FFEBEE'; topBtn.style.color = '#C62828'; topBtn.style.borderColor = '#EF9A9A'; }
+    else { topBtn.style.background = '#FFF3E0'; topBtn.style.color = '#E65100'; topBtn.style.borderColor = '#FFCC80'; }
+  }
   if (topCount) topCount.textContent = pendingCount;
 }
 
@@ -623,25 +986,28 @@ function approveNewAccount(reqId) {
   const reqs = getAccountRequests();
   const req = reqs.find(r => r.id === reqId);
   if (!req) return;
-  // Pre-fill the add user modal
+  // Pre-fill modal thêm tài khoản
   document.getElementById('mu-id').value = '';
   document.getElementById('mu-username').value = req.username || '';
   document.getElementById('mu-fullname').value = req.fullname || '';
   document.getElementById('mu-role').value = 'user';
   document.getElementById('mu-password').value = 'BV@2024';
   document.getElementById('mu-password2').value = 'BV@2024';
-  document.getElementById('modal-user-title').textContent = '➕ Tạo tài khoản từ yêu cầu';
+  document.getElementById('modal-user-title').textContent = '✅ Tạo tài khoản từ yêu cầu';
   refreshDeptDropdowns();
   if (req.dept) {
     const deptSel = document.getElementById('mu-dept');
-    const opt = Array.from(deptSel.options).find(o => o.text.includes(req.dept));
+    const opt = Array.from(deptSel.options).find(o => o.text.includes(req.dept) || req.dept.includes(o.text));
     if (opt) deptSel.value = opt.value;
   }
-  openModal('modal-user');
-  // Mark request as done after modal action
+  // Đánh dấu đã xử lý
   req.status = 'done';
+  req.doneAt = new Date().toISOString();
   saveAccountRequests(reqs);
   renderAccountRequests();
+  openModal('modal-user');
+  toast(`✅ Đang tạo tài khoản cho "${req.fullname}"`, 'success');
+  gsLogHistory('approve_new_acct', `Admin duyệt cấp TK mới: ${req.username} (${req.fullname})`);
 }
 
 function approveResetRequest(reqId) {
@@ -650,34 +1016,50 @@ function approveResetRequest(reqId) {
   if (!req) return;
   const user = USERS.find(u => u.username === req.username);
   if (!user) {
-    toast(`❌ Không tìm thấy tài khoản "${req.username}"`, 'error');
+    // Tài khoản không còn tồn tại
+    showConfirm(`⚠️ Không tìm thấy tài khoản "${req.username}" trong hệ thống. Có thể tài khoản đã bị xóa. Đánh dấu từ chối yêu cầu này?`, () => {
+      req.status = 'rejected';
+      req.doneAt = new Date().toISOString();
+      saveAccountRequests(reqs);
+      renderAccountRequests();
+      toast(`Đã từ chối yêu cầu (tài khoản không tồn tại)`, 'warning');
+    });
     return;
   }
-  showConfirm(`Reset mật khẩu tài khoản "${req.username}" (${req.fullname}) về "BV@2024"?`, () => {
+  showConfirm(`Reset mật khẩu tài khoản "<b>${req.username}</b>" (${req.fullname}) về mật khẩu tạm: <b>BV@2024</b>?<br><small style="color:var(--text3);">Người dùng sẽ cần đổi mật khẩu khi đăng nhập lần tiếp.</small>`, () => {
     user.password = 'BV@2024';
     user.mustChangePassword = true;
     saveUsers();
     if (navigator.onLine && gsReady()) gsPushUsers().catch(() => {});
     req.status = 'done';
+    req.doneAt = new Date().toISOString();
     saveAccountRequests(reqs);
     renderAccountRequests();
-    toast(`✅ Đã reset mật khẩu "${req.username}" → BV@2024`, 'success');
-    gsLogHistory('reset_password', `Admin reset MK tài khoản: ${req.username}`);
+    toast(`✅ Đã reset mật khẩu "${req.username}" → BV@2024. Thông báo cho người dùng!`, 'success');
+    gsLogHistory('reset_password', `Admin reset MK yêu cầu: ${req.username} (${req.fullname})`);
   });
 }
 
 function rejectRequest(reqId) {
   const reqs = getAccountRequests();
   const req = reqs.find(r => r.id === reqId);
-  if (req) { req.status = 'rejected'; saveAccountRequests(reqs); renderAccountRequests(); toast('Đã từ chối yêu cầu', 'info'); }
+  if (req) {
+    showConfirm(`Từ chối yêu cầu của <b>${req.fullname}</b>?`, () => {
+      req.status = 'rejected';
+      req.doneAt = new Date().toISOString();
+      saveAccountRequests(reqs);
+      renderAccountRequests();
+      toast('Đã từ chối yêu cầu', 'info');
+    });
+  }
 }
 function deleteRequest(reqId) {
   const reqs = getAccountRequests().filter(r => r.id !== reqId);
   saveAccountRequests(reqs);
-  renderAccountRequests();
+  _renderAccountRequestsHTML();
 }
 function clearAllRequests() {
-  showConfirm('Xóa tất cả yêu cầu tài khoản?', () => {
+  showConfirm('Xóa tất cả yêu cầu tài khoản? Thao tác này không thể hoàn tác.', () => {
     saveAccountRequests([]);
     renderAccountRequests();
     toast('Đã xóa tất cả yêu cầu', 'info');
