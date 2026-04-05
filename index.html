@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0D47A1">
+<meta name="description" content="Hệ thống Khảo sát Hài lòng Người bệnh – QĐ 56/2024 & QĐ 3869/2019">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="KS Hài Lòng">
+<title>Khảo sát Hài lòng – QĐ 56/2024 & QĐ 3869/2019</title>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css">
+
+</head>
+<body>
+
+<!-- ===== BOOTSTRAP OVERLAY ===== -->
+<div id="bootstrap-screen" class="hidden">
+  <div class="bootstrap-box">
+    <div class="bs-step active" id="bs-step-firstrun">
+      <div style="text-align:center;margin-bottom:20px;">
+        <div style="font-size:44px;margin-bottom:10px;">☁️</div>
+        <div class="bs-title">Thiết lập lần đầu</div>
+        <div class="bs-sub">Nhập <b>Spreadsheet ID</b> để kết nối cơ sở dữ liệu Cloud.<br>Chỉ cần thiết lập <b>1 lần</b> – các thiết bị khác sẽ tự đồng bộ.</div>
+      </div>
+
+      <!-- Hướng dẫn lấy ID -->
+      <div style="background:#E3F2FD;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:#0D47A1;line-height:1.8;">
+        <b>📋 Cách lấy Spreadsheet ID:</b><br>
+        1. Mở Google Sheets → nhìn URL trên trình duyệt<br>
+        2. Sao chép phần: <code style="background:#BBDEFB;padding:1px 5px;border-radius:4px;font-size:11px;">.../spreadsheets/d/<b>[COPY ĐOẠN NÀY]</b>/edit</code><br>
+        3. Dán vào ô bên dưới
+      </div>
+
+      <div class="login-form-group">
+        <label class="login-label">Google Spreadsheet ID <span style="color:#E53935">*</span></label>
+        <input type="text" class="login-input" id="bs-sheetid"
+          placeholder="VD: 1BxiMVs0XYZ_abc123defg..."
+          autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+          style="font-family:monospace;font-size:13px;letter-spacing:0.3px;"
+          oninput="bsValidateId(this.value)"
+          onkeydown="if(event.key==='Enter')bootstrapConnect()"/>
+        <div id="bs-id-hint" style="font-size:11px;margin-top:5px;color:var(--text3);line-height:1.6;display:none;"></div>
+        <div style="font-size:10px;color:var(--text3);margin-top:6px;line-height:1.7;">
+          ✅ Share Spreadsheet cho email SA sau:<br>
+          <span style="display:inline-flex;align-items:center;gap:6px;margin-top:4px;">
+            <b id="bs-sa-email" style="color:#0D47A1;font-size:9.5px;word-break:break-all;background:#E8F0FE;padding:3px 7px;border-radius:5px;cursor:pointer;" onclick="bsCopyEmail()" title="Nhấn để copy">kshl-328@crack-descent-492209-c3.iam.gserviceaccount.com</b>
+            <button onclick="bsCopyEmail()" style="background:#1565C0;color:#fff;border:none;border-radius:5px;font-size:10px;padding:3px 8px;cursor:pointer;flex-shrink:0;">📋 Copy</button>
+          </span>
+          <br><span style="color:#E65100;font-size:10px;">⚠️ Phải cấp quyền <b>Editor</b> cho email này</span>
+        </div>
+      </div>
+
+      <div class="login-err" id="bs-err" style="display:none;margin-bottom:10px;white-space:pre-line;line-height:1.6;font-size:12.5px;"></div>
+
+      <button class="login-btn login-btn-primary" onclick="bootstrapConnect()" id="bs-connect-btn"
+        style="font-size:15px;padding:14px;margin-top:4px;">
+        🔗 Kết nối & Tải cấu hình
+      </button>
+
+      <div class="bs-progress-bar" id="bs-progress-bar" style="display:none;margin-top:12px;">
+        <div class="bs-progress-fill" id="bs-progress-fill"></div>
+      </div>
+      <div class="bs-status" id="bs-status" style="margin-top:8px;font-size:12px;color:var(--text2);text-align:center;min-height:20px;"></div>
+
+      <!-- Liên kết tạo Sheets mới -->
+      <div style="text-align:center;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:8px;">Chưa có Google Sheets?</div>
+        <a href="https://sheets.new" target="_blank"
+          style="display:inline-flex;align-items:center;gap:6px;background:#E8F5E9;color:#2E7D32;border:1.5px solid #A5D6A7;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;text-decoration:none;">
+          ➕ Tạo Google Sheets mới
+        </a>
+      </div>
+    </div>
+
+    <div class="bs-step" id="bs-step-loading">
+      <div class="bs-spinner"></div>
+      <div class="bs-title" style="margin-bottom:4px;">Đang tải cấu hình...</div>
+      <div class="bs-status" id="bs-loading-msg">Đang kết nối Google Sheets...</div>
+      <div class="bs-progress-bar"><div class="bs-progress-fill" id="bs-loading-fill" style="width:30%"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== CLOUD LOADING OVERLAY ===== -->
+<div id="cloud-loading-overlay" class="hidden">
+  <div class="clo-spinner"></div>
+  <div class="clo-msg" id="clo-msg">🔄 Đang đồng bộ cấu hình từ Cloud...</div>
+  <div class="clo-sub" id="clo-sub">Vui lòng chờ giây lát</div>
+</div>
+
+<!-- ===== LOGIN SCREEN ===== -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="login-logo-badge">QĐ 56/2024 + QĐ 3869/2019</div>
+      <div class="login-logo-title">Hệ thống Khảo sát<br>Hài lòng Người bệnh</div>
+      <div class="login-logo-sub">Bộ Y tế | Hệ thống quản lý khảo sát chất lượng BV</div>
+    </div>
+    <div class="login-tabs">
+      <div class="login-tab active" onclick="switchLoginTab('staff')">👤 Cán bộ / Admin</div>
+      <div class="login-tab" onclick="switchLoginTab('guest')">🏥 Người dân khảo sát</div>
+    </div>
+
+    <!-- Staff login -->
+    <div id="login-staff-form">
+      <div class="login-form-group">
+        <label class="login-label">Tên đăng nhập</label>
+        <input type="text" class="login-input" id="login-username" placeholder="Nhập tên đăng nhập..." onkeydown="if(event.key==='Enter')doLogin()"/>
+      </div>
+      <div class="login-form-group">
+        <label class="login-label">Mật khẩu</label>
+        <div style="position:relative;">
+          <input type="password" class="login-input" id="login-password" placeholder="Nhập mật khẩu..." onkeydown="if(event.key==='Enter')doLogin()" style="padding-right:44px;"/>
+          <button type="button" onclick="togglePwVis('login-password',this)" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);">👁</button>
+        </div>
+      </div>
+      <div class="login-err" id="login-err" style="display:none;">⚠️ Vui lòng nhập tên đăng nhập và mật khẩu</div>
+      <button class="login-btn login-btn-primary" onclick="doLogin()" id="login-submit-btn">🔐 Đăng nhập</button>
+      <div id="login-sheetid-row" style="display:none;margin-top:12px;padding:10px 12px;background:#E3F2FD;border-radius:9px;">
+        <div style="font-size:11px;color:#0D47A1;font-weight:700;margin-bottom:5px;">⚠️ Thiết bị chưa kết nối Cloud</div>
+        <input type="text" class="login-input" id="login-sheetid-quick"
+          placeholder="Nhập Spreadsheet ID..." style="font-size:13px;padding:9px 12px;"/>
+        <div style="font-size:9px;color:var(--text3);margin-top:3px;">Share cho: kshl-328@crack-descent-492209-c3.iam.gserviceaccount.com</div>
+      </div>
+      <!-- Account request links -->
+      <div style="margin-top:14px;display:flex;flex-direction:column;gap:7px;">
+        <button class="login-btn" style="background:#E8F0FE;color:#0D47A1;border:1.5px solid #BBDEFB;font-size:13px;padding:10px;margin-top:0;" onclick="openAccountRequest('new')">📋 Yêu cầu cấp tài khoản mới</button>
+        <button class="login-btn" style="background:#FFF8E1;color:#E65100;border:1.5px solid #FFE082;font-size:13px;padding:10px;margin-top:0;" onclick="openAccountRequest('reset')">🔑 Quên mật khẩu / Yêu cầu reset</button>
+      </div>
+    </div>
+
+    <!-- Guest entry -->
+    <div id="login-guest-form" style="display:none;">
+      <div class="success-box mb-14">
+        ✅ <b>Người dân không cần đăng nhập.</b><br>Nhấn nút bên dưới để vào trang khảo sát và chọn phiếu phù hợp để tham gia.
+      </div>
+      <button class="login-btn login-btn-primary" onclick="doLoginGuest()">🏥 Vào trang khảo sát</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- Sidebar overlay for mobile -->
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+
+<!-- ===== BOTTOM NAV (mobile) ===== -->
+<nav class="bottom-nav" id="bottomNav">
+  <div class="bottom-nav-inner">
+    <div class="bn-item staff-only" id="bn-dash" onclick="showPage('dashboard');closeSidebar()">
+      <span class="bn-icon">📊</span>
+      <span>Dashboard</span>
+    </div>
+    <div class="bn-item" id="bn-survey" onclick="mobileNavSurvey()">
+      <span class="bn-icon">📝</span>
+      <span>Nhập phiếu</span>
+    </div>
+    <div class="bn-item admin-only" id="bn-list" onclick="showPage('datalist');closeSidebar()">
+      <span class="bn-icon">📋</span>
+      <span>Danh sách</span>
+    </div>
+    <div class="bn-item user-only" id="bn-profile" onclick="showPage('profile');closeSidebar()" style="display:none">
+      <span class="bn-icon">👤</span>
+      <span>Tài khoản</span>
+    </div>
+    <div class="bn-item" id="bn-menu" onclick="toggleSidebar()">
+      <span class="bn-icon">☰</span>
+      <span>Menu</span>
+    </div>
+  </div>
+</nav>
+
+<!-- ===== APP ===== -->
+<div class="app-shell">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-badges">
+        <span class="logo-badge">QĐ 56/2024</span>
+        <span class="logo-badge2">QĐ 3869/2019</span>
+      </div>
+      <div class="logo-title">Khảo sát Hài lòng<br>Người bệnh & NVYT</div>
+      <div class="logo-sub" id="sb-hospital-name">Hệ thống quản lý khảo sát</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section admin-only">Tổng quan</div>
+      <div class="nav-item admin-only" onclick="showPage('dashboard')"><span class="icon">📊</span> Dashboard</div>
+
+      <div class="nav-section">Nhập phiếu khảo sát</div>
+      <div class="nav-item guest-visible" onclick="showPage('guest-home')" id="nav-guest-home"><span class="icon">🏠</span> Chọn phiếu khảo sát</div>
+      <div class="nav-item staff-only" onclick="showPage('m1')"><span class="icon">🏥</span> Mẫu 1 – NB Nội trú</div>
+      <div class="nav-item staff-only" onclick="showPage('m2')"><span class="icon">🏃</span> Mẫu 2 – NB Ngoại trú</div>
+      <div class="nav-item staff-only" onclick="showPage('m3')"><span class="icon">👨‍⚕️</span> Mẫu 3 – Nhân viên YT</div>
+      <div class="nav-item staff-only" onclick="showPage('m4')"><span class="icon">👶</span> Mẫu 4 – Người mẹ sinh</div>
+      <div class="nav-item staff-only" onclick="showPage('m5')"><span class="icon">🍼</span> Mẫu 5 – Nuôi con SM</div>
+
+      <div class="nav-section admin-only">Dữ liệu & Đồng bộ</div>
+      <div class="nav-item admin-only" onclick="showPage('datalist')"><span class="icon">📋</span> Danh sách phiếu <span class="nav-badge" id="pendingBadge" style="display:none">0</span></div>
+      <div class="nav-item admin-only" onclick="showPage('autofill')"><span class="icon">🤖</span> Tự động điền BYT</div>
+      <div class="nav-item admin-only" onclick="showPage('bytupload')"><span class="icon">📤</span> Gửi phiếu lên BYT <span class="nav-badge" id="pendingBYTBadge" style="display:none">0</span></div>
+      <div class="nav-item admin-only" onclick="showPage('baocao')"><span class="icon">📑</span> Tạo báo cáo tổng hợp</div>
+      <div class="nav-item admin-only" onclick="showPage('history')"><span class="icon">🕒</span> Lịch sử hệ thống</div>
+
+      <div class="nav-section admin-only">Cấu hình hệ thống</div>
+      <div class="nav-item admin-only" onclick="showPage('settings')"><span class="icon">⚙️</span> Cấu hình</div>
+      <div class="nav-item admin-only" onclick="showPage('users')"><span class="icon">👥</span> Quản lý tài khoản <span class="nav-badge" id="reqBadgeNav" style="display:none">0</span></div>
+      <div class="nav-item user-only" onclick="showPage('profile')"><span class="icon">👤</span> Tài khoản của tôi</div>
+      <div class="nav-item admin-only" onclick="showPage('depts')"><span class="icon">🏬</span> Danh mục Khoa Phòng</div>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-info">
+        <div class="user-avatar" id="user-avatar">?</div>
+        <div>
+          <div class="user-name" id="user-display-name">Khách</div>
+          <div class="user-role" id="user-display-role">Chưa đăng nhập</div>
+        </div>
+      </div>
+      <button class="user-only" onclick="showPage('profile');closeSidebar()" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.65);padding:7px 10px;border-radius:8px;font-size:11.5px;cursor:pointer;margin-top:7px;width:100%;font-family:var(--font);font-weight:500;min-height:38px;display:none;align-items:center;justify-content:center;gap:6px;">👤 Tài khoản của tôi</button>
+<button class="logout-btn" onclick="doLogout()">🚪 Đăng xuất / Thoát</button>
+    </div>
+    <div class="sidebar-footer">
+      <span class="online-dot" id="onlineIndicator"></span><span id="connectionStatus">...</span>
+      <div style="margin-top:3px;opacity:.5;">v6.0 · QĐ56/2024 + QĐ3869/2019</div>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <div class="offline-banner hidden" id="offlineBanner">⚡ Offline – Dữ liệu lưu cục bộ, tự đồng bộ khi có mạng</div>
+    <div class="role-banner hidden" id="roleBanner"></div>
+    <div class="topbar">
+      <button class="topbar-menu-btn" onclick="toggleSidebar()" aria-label="Menu">☰</button>
+      <div class="topbar-title" id="topbarTitle">Trang chủ</div>
+      <div class="flex-gap" id="topbar-actions">
+        <button class="btn btn-outline btn-sm admin-only" onclick="syncToSheets()">🔄 Đồng bộ GG Sheets</button>
+        <button class="btn admin-only" onclick="showPage('users')" id="topbar-req-btn" style="display:none;background:#FFF3E0;color:#E65100;border:1.5px solid #FFCC80;font-size:12px;padding:6px 12px;min-height:38px;border-radius:8px;font-weight:700;gap:5px;align-items:center;" title="Có yêu cầu tài khoản chờ xử lý">🔔 <span id="topbar-req-count">0</span> yêu cầu</button>
+        <button class="btn btn-primary btn-sm staff-only" onclick="showPage('m1')">➕ Nhập phiếu mới</button>
+      </div>
+    </div>
+
+    <!-- ===== GUEST HOME ===== -->
+    <div class="page" id="page-guest-home">
+      <div style="max-width:680px;margin:0 auto;">
+        <div style="text-align:center;padding:24px 0 28px;">
+          <div style="font-size:40px;margin-bottom:12px;">🏥</div>
+          <div style="font-size:22px;font-weight:800;color:var(--primary);line-height:1.3;">Chào mừng bạn đến khảo sát!</div>
+          <div style="font-size:14px;color:var(--text2);margin-top:9px;line-height:1.7;max-width:480px;margin-left:auto;margin-right:auto;">Ý kiến của bạn giúp chúng tôi cải thiện chất lượng dịch vụ y tế.<br>Vui lòng chọn phiếu khảo sát phù hợp bên dưới.</div>
+        </div>
+        <div class="guest-survey-card" onclick="showPage('m1')">
+          <div class="gs-title">🏥 Phiếu 1 – Người bệnh Nội trú</div>
+          <div class="gs-sub">Dành cho bệnh nhân đang nằm viện điều trị hoặc người chăm sóc</div>
+          <div class="gs-meta"><span class="chip chip-blue">QĐ 56/QĐ-BYT 2024</span><span class="chip chip-cyan">36 câu hỏi</span></div>
+        </div>
+        <div class="guest-survey-card" onclick="showPage('m2')">
+          <div class="gs-title">🏃 Phiếu 2 – Người bệnh Ngoại trú</div>
+          <div class="gs-sub">Dành cho bệnh nhân đến khám bệnh theo ngày (không nằm viện)</div>
+          <div class="gs-meta"><span class="chip chip-blue">QĐ 56/QĐ-BYT 2024</span><span class="chip chip-cyan">31 câu hỏi</span></div>
+        </div>
+        <div class="guest-survey-card" onclick="showPage('m4')">
+          <div class="gs-title">👶 Phiếu 4 – Người mẹ sinh con tại bệnh viện</div>
+          <div class="gs-sub">Dành cho sản phụ sau sinh hoặc người nhà đại diện</div>
+          <div class="gs-meta"><span class="chip chip-orange">QĐ 3869/QĐ-BYT 2019</span><span class="chip chip-cyan">26 câu hỏi</span></div>
+        </div>
+        <div class="guest-survey-card" onclick="showPage('m5')">
+          <div class="gs-title">🍼 Phiếu 5 – Nuôi con bằng sữa mẹ</div>
+          <div class="gs-sub">Dành cho bà mẹ đang nuôi con bằng sữa mẹ tại bệnh viện hoặc sau ra viện</div>
+          <div class="gs-meta"><span class="chip chip-orange">QĐ 3869/QĐ-BYT 2019</span><span class="chip chip-cyan">17 câu hỏi</span></div>
+        </div>
+        <div style="text-align:center;margin-top:10px;font-size:11.5px;color:var(--text3);">📋 Phiếu 3 (Nhân viên Y tế) dành riêng cho cán bộ y tế, cần đăng nhập.</div>
+      </div>
+    </div>
+
+    <!-- ===== DASHBOARD ===== -->
+    <div class="page" id="page-dashboard">
+      <div class="stats-grid">
+        <div class="stat-card blue"><div class="stat-label">Tổng phiếu</div><div class="stat-value" id="st-total">0</div><div class="stat-sub">Tất cả loại</div><div class="stat-icon">📋</div></div>
+        <div class="stat-card cyan"><div class="stat-label">Chờ đồng bộ</div><div class="stat-value" id="st-pending">0</div><div class="stat-sub">Chưa lên GG Sheets</div><div class="stat-icon">⏳</div></div>
+        <div class="stat-card green"><div class="stat-label">Đã đồng bộ</div><div class="stat-value" id="st-synced">0</div><div class="stat-sub">Upload thành công</div><div class="stat-icon">✅</div></div>
+        <div class="stat-card red"><div class="stat-label">Tháng này</div><div class="stat-value" id="st-month">0</div><div class="stat-sub">Phiếu trong tháng</div><div class="stat-icon">📅</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="card"><div class="card-header"><div class="card-title">📈 Phân bố theo mẫu</div></div><div class="card-body" id="dash-chart"></div></div>
+        <div class="card"><div class="card-header"><div class="card-title">🕐 Nhập gần đây</div><button class="btn btn-outline btn-sm" onclick="showPage('datalist')">Xem tất cả</button></div><div id="dash-recent" style="padding:0"></div></div>
+      </div>
+      <div class="card mt-18">
+        <div class="card-header"><div class="card-title">⚡ Google Sheets</div></div>
+        <div class="card-body"><div id="sheets-status" style="font-size:13px;color:var(--text2)">Chưa cấu hình. Vào <b>Cấu hình</b> để thiết lập.</div>
+          <div class="progress-bar"><div class="progress-fill" id="sync-progress" style="width:0%"></div></div>
+          <div id="gs-dash-status" style="font-size:11.5px;color:var(--text3);margin-top:6px;"></div>
+          <div class="flex-gap mt-8" style="flex-wrap:wrap;">
+            <button class="btn btn-accent btn-sm" onclick="syncToSheets()">🔄 Đồng bộ pending</button>
+            <button class="btn btn-outline btn-sm" onclick="gsPushAllData(true)">⬆️ Đẩy tất cả</button>
+            <button class="btn btn-outline btn-sm" onclick="gsPullAllData(true)">⬇️ Kéo từ Sheets</button>
+          </div>
+        </div>
+      </div>
+      <div class="card mt-18">
+        <div class="card-header"><div class="card-title">📤 Gửi lên trang BYT</div><button class="btn btn-accent btn-sm" onclick="showPage('bytupload')">Quản lý →</button></div>
+        <div class="card-body" id="dash-byt-status">
+          <div style="display:flex;gap:14px;flex-wrap:wrap;">
+            <div style="text-align:center;flex:1;min-width:80px;"><div style="font-size:22px;font-weight:800;color:var(--warning)" id="st-byt-pending">0</div><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;">Chờ gửi BYT</div></div>
+            <div style="text-align:center;flex:1;min-width:80px;"><div style="font-size:22px;font-weight:800;color:var(--success)" id="st-byt-done">0</div><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;">Đã gửi BYT</div></div>
+            <div style="text-align:center;flex:1;min-width:80px;"><div style="font-size:22px;font-weight:800;color:var(--accent2)" id="st-byt-failed">0</div><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;">Gửi lỗi</div></div>
+          </div>
+          <div style="margin-top:10px;font-size:11.5px;color:var(--text3);" id="dash-byt-autocfg"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SURVEY PAGES GENERATED DYNAMICALLY -->
+    <div class="page" id="page-m1"></div>
+    <div class="page" id="page-m2"></div>
+    <div class="page" id="page-m3"></div>
+    <div class="page" id="page-m4"></div>
+    <div class="page" id="page-m5"></div>
+
+    <!-- ===== DATA LIST ===== -->
+    <div class="page" id="page-datalist">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📋 Danh sách phiếu khảo sát</div>
+          <div class="flex-gap">
+            <button class="btn btn-accent btn-sm" onclick="syncToSheets()">🔄 Đồng bộ</button>
+            <button class="btn btn-outline btn-sm" onclick="exportCSV()">📥 CSV</button>
+            <button class="btn btn-outline btn-sm" onclick="exportJSON()">📥 JSON</button>
+          </div>
+        </div>
+        <div style="padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--border);display:flex;gap:9px;flex-wrap:wrap;align-items:center;">
+          <select class="form-select" style="flex:1;min-width:140px;max-width:200px;font-size:12.5px;" id="fl-type" onchange="renderList()"><option value="">Tất cả loại phiếu</option><option value="m1">Mẫu 1 – NB Nội trú</option><option value="m2">Mẫu 2 – NB Ngoại trú</option><option value="m3">Mẫu 3 – NVYT</option><option value="m4">Mẫu 4 – Người mẹ sinh</option><option value="m5">Mẫu 5 – Nuôi con SM</option></select>
+          <select class="form-select" style="flex:1;min-width:120px;max-width:160px;font-size:12.5px;" id="fl-status" onchange="renderList()"><option value="">Tất cả TT</option><option value="pending">Chờ đồng bộ</option><option value="synced">Đã đồng bộ</option></select>
+          <input type="date" class="form-input" style="flex:1;min-width:140px;max-width:170px;font-size:12.5px;" id="fl-date" onchange="renderList()"/>
+          <button class="btn btn-outline btn-sm" onclick="clearFilters()">✖ Xóa lọc</button>
+        </div>
+        <div class="table-wrap" id="list-table"></div>
+      </div>
+    </div>
+
+    <!-- ===== AUTOFILL ===== -->
+    <div class="page" id="page-autofill">
+      <div class="card">
+        <div class="card-header"><div class="card-title">🤖 Tự động điền dữ liệu lên trang BYT</div></div>
+        <div class="card-body">
+          <div class="warn-box mb-14">⚠️ Tạo script JavaScript để dán vào Console (F12) của trang hailong.chatluongbenhvien.vn. Kiểm tra trước khi bấm Gửi.</div>
+          <div class="card mb-14">
+            <div class="card-body">
+              <div class="form-grid">
+                <div class="form-group"><label class="form-label">Loại phiếu</label><select class="form-select" id="af-type" onchange="loadAFList()"><option value="">--Chọn--</option><option value="m1">Mẫu 1</option><option value="m2">Mẫu 2</option><option value="m3">Mẫu 3</option><option value="m4">Mẫu 4</option><option value="m5">Mẫu 5</option></select></div>
+                <div class="form-group"><label class="form-label">Chọn phiếu</label><select class="form-select" id="af-record"><option value="">--Chọn phiếu--</option></select></div>
+              </div>
+              <div class="flex-gap mt-14"><button class="btn btn-primary" onclick="genScript()">⚡ Tạo Script</button><button class="btn btn-accent" onclick="openBYT()">🔗 Mở trang BYT</button></div>
+            </div>
+          </div>
+          <div id="script-section" style="display:none">
+            <div class="card"><div class="card-header"><div class="card-title">📜 Script Console</div></div>
+            <div class="card-body"><div class="code-block" id="script-out"><button class="code-copy-btn" onclick="copyScript()">📋 Copy</button></div></div></div>
+          </div>
+          <div class="card mt-14">
+            <div class="card-header"><div class="card-title">🔗 Liên kết nhanh BYT</div></div>
+            <div class="card-body" id="byt-links"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== BYT UPLOAD PAGE ===== -->
+    <div class="page" id="page-bytupload">
+      <!-- BYT Login Status Card -->
+      <div class="card mb-14" id="byt-login-status-card">
+        <div class="card-header">
+          <div class="card-title">🔐 Trạng thái đăng nhập trang BYT</div>
+          <div class="flex-gap">
+            <button class="btn btn-outline btn-sm" onclick="checkBYTLoginStatus()">🔄 Kiểm tra</button>
+            <button class="btn btn-accent btn-sm" id="btn-byt-login-now" onclick="loginBYTNow()" style="display:none">🔑 Đăng nhập BYT</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="byt-status-bar checking" id="byt-login-statusbar">
+            <span class="byt-status-dot orange" id="byt-dot"></span>
+            <span id="byt-login-msg">Nhấn "Kiểm tra" để xác minh trạng thái đăng nhập trang BYT...</span>
+          </div>
+          <div class="warn-box" style="font-size:12px;">
+            ⚠️ <b>Cách hoạt động:</b> Hệ thống mở trang BYT trong tab mới, kiểm tra trạng thái đăng nhập. Nếu chưa đăng nhập sẽ tự động điền tài khoản BYT đã cấu hình để đăng nhập trước khi gửi phiếu.<br>
+            <b>Yêu cầu:</b> Tài khoản BYT phải được cấu hình tại <a href="#" onclick="showPage('settings');return false" style="color:var(--primary)">Cấu hình hệ thống</a>. Trình duyệt cần cho phép mở tab mới.
+          </div>
+        </div>
+      </div>
+
+      <!-- Upload config -->
+      <div class="card mb-14">
+        <div class="card-header">
+          <div class="card-title">⚙️ Cấu hình tự động gửi</div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--primary);">
+            <input type="checkbox" id="cfg-auto-upload" onchange="toggleAutoUpload(this.checked)" style="width:18px;height:18px;cursor:pointer;accent-color:var(--accent);">
+            Tự động gửi BYT khi lưu phiếu mới
+          </label>
+        </div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">Lọc theo loại phiếu</label>
+              <select class="form-select" id="byt-fl-type" onchange="renderBYTQueue()">
+                <option value="">Tất cả loại phiếu</option>
+                <option value="m1">Mẫu 1 – NB Nội trú</option>
+                <option value="m2">Mẫu 2 – NB Ngoại trú</option>
+                <option value="m3">Mẫu 3 – NVYT</option>
+                <option value="m4">Mẫu 4 – Người mẹ sinh</option>
+                <option value="m5">Mẫu 5 – Nuôi con SM</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Lọc trạng thái BYT</label>
+              <select class="form-select" id="byt-fl-status" onchange="renderBYTQueue()">
+                <option value="pending">Chờ gửi BYT</option>
+                <option value="byt-done">Đã gửi BYT</option>
+                <option value="">Tất cả</option>
+              </select>
+            </div>
+          </div>
+          <div class="flex-gap mt-14" style="flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="selectAllBYTQueue()">☑️ Chọn tất cả</button>
+            <button class="btn btn-outline" onclick="deselectAllBYTQueue()">⬜ Bỏ chọn</button>
+            <button class="btn btn-success" id="btn-send-selected" onclick="sendSelectedToBYT()">📤 Gửi phiếu đã chọn lên BYT</button>
+            <span id="byt-queue-count" style="font-size:12px;color:var(--text3);margin-left:4px;"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Queue list -->
+      <div class="card mb-14">
+        <div class="card-header">
+          <div class="card-title">📋 Danh sách phiếu</div>
+          <button class="btn btn-outline btn-sm" onclick="renderBYTQueue()">🔄 Làm mới</button>
+        </div>
+        <div class="card-body" id="byt-queue-list">
+          <div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">Chưa có phiếu</div></div>
+        </div>
+      </div>
+
+      <!-- Upload log -->
+      <div class="card" id="byt-log-card" style="display:none">
+        <div class="card-header">
+          <div class="card-title">📜 Nhật ký gửi phiếu lên BYT</div>
+          <button class="btn btn-outline btn-sm" onclick="clearBYTLog()">🗑️ Xóa log</button>
+        </div>
+        <div class="card-body">
+          <div class="upload-log-box" id="byt-upload-log"></div>
+        </div>
+      </div>
+    </div>
+    <!-- ===== BÁO CÁO TỔNG HỢP ===== -->
+    <div class="page" id="page-baocao">
+
+      <!-- Config card -->
+      <div class="card mb-14">
+        <div class="card-header">
+          <div class="card-title">📑 Tạo báo cáo tổng hợp kết quả khảo sát hài lòng</div>
+        </div>
+        <div class="card-body">
+          <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;">
+            <div class="form-group">
+              <label class="form-label">Loại kỳ báo cáo</label>
+              <select class="form-select" id="bc-period-type" onchange="onBCPeriodTypeChange()">
+                <option value="thang">📅 Theo tháng</option>
+                <option value="qui" selected>📆 Theo quý</option>
+                <option value="nam">🗓️ Theo năm</option>
+                <option value="giai-doan">📊 Theo giai đoạn (tùy chọn)</option>
+              </select>
+            </div>
+            <div class="form-group" id="bc-month-group" style="display:none">
+              <label class="form-label">Tháng</label>
+              <select class="form-select" id="bc-month">
+                <option value="1">Tháng 01</option><option value="2">Tháng 02</option>
+                <option value="3">Tháng 03</option><option value="4">Tháng 04</option>
+                <option value="5">Tháng 05</option><option value="6">Tháng 06</option>
+                <option value="7">Tháng 07</option><option value="8">Tháng 08</option>
+                <option value="9">Tháng 09</option><option value="10">Tháng 10</option>
+                <option value="11">Tháng 11</option><option value="12">Tháng 12</option>
+              </select>
+            </div>
+            <div class="form-group" id="bc-qui-group">
+              <label class="form-label">Quý</label>
+              <select class="form-select" id="bc-qui">
+                <option value="1">Quý 1 (T1–T3)</option>
+                <option value="2">Quý 2 (T4–T6)</option>
+                <option value="3" selected>Quý 3 (T7–T9)</option>
+                <option value="4">Quý 4 (T10–T12)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Năm</label>
+              <input type="number" class="form-input" id="bc-year" value="2025" min="2020" max="2030"/>
+            </div>
+          </div>
+          <!-- Giai đoạn tùy chọn -->
+          <div id="bc-giai-doan-group" style="display:none;" class="form-grid mt-8">
+            <div class="form-group">
+              <label class="form-label">Từ ngày</label>
+              <input type="date" class="form-input" id="bc-from-date"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Đến ngày</label>
+              <input type="date" class="form-input" id="bc-to-date"/>
+            </div>
+          </div>
+          <div class="form-grid mt-8">
+            <div class="form-group">
+              <label class="form-label">Đơn vị / Tên bệnh viện</label>
+              <input type="text" class="form-input" id="bc-hvname" placeholder="Bệnh viện..."/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Cơ quan chủ quản</label>
+              <input type="text" class="form-input" id="bc-syt" placeholder="Sở Y tế Đồng Nai" value="Sở Y tế Đồng Nai"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Số công văn báo cáo</label>
+              <input type="text" class="form-input" id="bc-so-cv" placeholder="VD: 125/BC-BV"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Kế hoạch chỉ tiêu hài lòng (%)</label>
+              <input type="number" class="form-input" id="bc-target" value="90" min="0" max="100"/>
+            </div>
+          </div>
+          <div class="flex-gap mt-14" style="flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="renderBaoCaoPreview()">🔍 Xem trước báo cáo</button>
+            <button class="btn btn-success" onclick="exportBaoCaoDocx()">📄 Xuất file Word (.docx)</button>
+            <button class="btn btn-outline" onclick="exportBaoCaoHTML()">🌐 Xuất HTML (in)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Thống kê nhanh -->
+      <div id="bc-stats-row" style="display:none;" class="mb-14">
+        <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);">
+          <div class="stat-card blue"><div class="stat-label">Tổng phiếu kỳ này</div><div class="stat-value" id="bc-st-total">0</div><div class="stat-icon">📋</div></div>
+          <div class="stat-card cyan"><div class="stat-label">Nội trú (M1)</div><div class="stat-value" id="bc-st-m1">0</div><div class="stat-icon">🏥</div></div>
+          <div class="stat-card green"><div class="stat-label">Ngoại trú (M2)</div><div class="stat-value" id="bc-st-m2">0</div><div class="stat-icon">🏃</div></div>
+          <div class="stat-card red"><div class="stat-label">Nhân viên YT (M3)</div><div class="stat-value" id="bc-st-m3">0</div><div class="stat-icon">👨‍⚕️</div></div>
+        </div>
+      </div>
+
+      <!-- Preview card -->
+      <div class="card" id="bc-preview-card" style="display:none;">
+        <div class="card-header">
+          <div class="card-title">👁️ Xem trước nội dung báo cáo</div>
+          <div class="flex-gap">
+            <button class="btn btn-success btn-sm" onclick="exportBaoCaoDocx()">📄 Xuất Word</button>
+            <button class="btn btn-outline btn-sm" onclick="exportBaoCaoHTML()">🌐 Xuất HTML</button>
+          </div>
+        </div>
+        <div class="card-body" id="bc-preview-body" style="font-family:'Times New Roman',serif;font-size:14px;line-height:1.8;color:#1a1a1a;max-height:75vh;overflow-y:auto;background:#fff;padding:28px 36px;border:1px solid #e0e0e0;border-radius:8px;">
+        </div>
+      </div>
+
+    </div>
+    <!-- ===== LỊCH SỬ HỆ THỐNG ===== -->
+    <div class="page" id="page-history">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🕒 Lịch sử sử dụng hệ thống</div>
+          <div class="flex-gap">
+            <button class="btn btn-accent btn-sm" onclick="loadHistory()">🔄 Tải từ Sheets</button>
+            <button class="btn btn-outline btn-sm" onclick="clearHistoryView()">🗑️ Xóa view</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="info-box mb-14" style="font-size:12px;">
+            📋 Toàn bộ lịch sử đăng nhập, lưu phiếu, thay đổi cấu hình, đồng bộ dữ liệu được ghi lại tại tab <b>HISTORY</b> trên Google Sheets. Nhấn <b>"Tải từ Sheets"</b> để xem.
+          </div>
+          <div id="history-table-wrap">
+            <div class="empty-state"><div class="empty-icon">🕒</div><div class="empty-text">Nhấn "Tải từ Sheets" để xem lịch sử</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page" id="page-settings">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">📊 Google Sheets – Service Account</div>
+            <span id="gs-conn-badge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:#FFF3E0;color:#E65100;">⚠️ Chưa kết nối</span>
+          </div>
+          <div class="card-body">
+            <div class="info-box mb-14" style="font-size:11.5px;">
+              🔑 Dùng <b>Service Account JSON Key</b> — xác thực an toàn, không cần đăng nhập OAuth, hoạt động ổn định trên mọi thiết bị.<br>
+              Spreadsheet tự tạo 5 tabs: <b>CONFIG · SURVEYS · USERS · DEPTS · HISTORY</b>
+            </div>
+            <div id="sa-default-info" style="margin-bottom:10px;padding:8px 12px;background:#E8F5E9;border-radius:8px;border:1px solid #A5D6A7;">
+              <span style="color:#2E7D32;font-size:11px;">✅ SA <b>kshl-328</b> tích hợp sẵn – chỉ cần nhập Spreadsheet ID bên dưới</span>
+            </div>
+
+            <div class="form-group mb-14">
+              <label class="form-label">Spreadsheet ID <span class="req">*</span></label>
+              <input type="text" class="form-input" id="cfg-sheetid" placeholder="1BxiMVs0XYZ..."/>
+              <div style="font-size:10px;color:var(--text3);margin-top:2px;">URL: .../spreadsheets/d/<b>[ID]</b>/edit</div>
+            </div>
+
+            <div class="form-group mb-14">
+              <label class="form-label">Service Account Email <span class="req">*</span></label>
+              <input type="text" class="form-input" id="cfg-sa-email" placeholder="my-sa@project-id.iam.gserviceaccount.com"/>
+              <div style="font-size:10px;color:var(--text3);margin-top:2px;">Lấy từ file JSON key: trường <b>"client_email"</b></div>
+            </div>
+
+            <div class="form-group mb-14">
+              <label class="form-label">Private Key (PEM) <span class="req">*</span></label>
+              <textarea class="form-textarea" id="cfg-sa-key" rows="4"
+                placeholder="-----BEGIN PRIVATE KEY-----&#10;MIIEvAIBADANBgkq...&#10;-----END PRIVATE KEY-----"></textarea>
+              <div style="font-size:10px;color:var(--text3);margin-top:2px;">
+                Lấy từ file JSON key: trường <b>"private_key"</b> — dán nguyên cả header/footer<br>
+                💡 Hoặc nhấn <b>"Dán JSON Key"</b> để tự phân tích file JSON
+              </div>
+            </div>
+
+            <div class="form-group mb-14">
+              <label class="form-label">📋 Dán nội dung file JSON Key</label>
+              <textarea class="form-textarea" id="cfg-sa-json-paste" rows="3"
+                placeholder='{"type":"service_account","project_id":"...","client_email":"...","private_key":"-----BEGIN PRIVATE KEY-----\\n..."}'></textarea>
+              <button class="btn btn-outline btn-sm" style="margin-top:6px;" onclick="parseSAJson()">
+                🔍 Phân tích JSON Key → Tự điền
+              </button>
+            </div>
+
+            <div class="form-group mb-14">
+              <label class="form-label">Sheet tab phiếu khảo sát</label>
+              <input type="text" class="form-input" id="cfg-sheetname" value="SURVEYS"/>
+            </div>
+
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-primary" onclick="saveCfgSheets()" style="flex:1">💾 Lưu</button>
+              <button class="btn btn-outline" onclick="testSheets()" style="flex:1">🔌 Kiểm tra kết nối</button>
+            </div>
+            <div id="cfg-sheets-status" style="margin-top:8px;font-size:12px;color:var(--text3);"></div>
+
+            <div class="divider"></div>
+            <div class="settings-sec-title">Đồng bộ dữ liệu</div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap;">
+              <button class="btn btn-success btn-sm" onclick="gsInitSheets()">🏗️ Tạo cấu trúc Sheets</button>
+              <button class="btn btn-accent btn-sm" onclick="gsPushAllData(true)">⬆️ Đẩy toàn bộ</button>
+              <button class="btn btn-outline btn-sm" onclick="gsPullAllData(true)">⬇️ Kéo từ Sheets</button>
+            </div>
+            <div id="gs-sync-status" style="margin-top:8px;font-size:11.5px;color:var(--text2);"></div>
+
+            <div class="divider"></div>
+            <div class="card" style="background:#F8F9FA;border:1px dashed #CFD8DC;">
+              <div class="card-body" style="padding:12px;">
+                <div class="settings-sec-title" style="margin-bottom:8px;">📖 Hướng dẫn cài đặt (5 bước)</div>
+                <div style="font-size:11px;color:var(--text2);line-height:2;">
+                  <b>1.</b> <a href="https://console.cloud.google.com" target="_blank" style="color:var(--primary)">console.cloud.google.com</a> → Tạo Project mới<br>
+                  <b>2.</b> APIs &amp; Services → Enable <b>Google Sheets API</b><br>
+                  <b>3.</b> IAM &amp; Admin → <b>Service Accounts</b> → Create → Download <b>JSON Key</b><br>
+                  <b>4.</b> Mở Google Spreadsheet → Share → Dán email SA vào → <b>Editor</b><br>
+                  <b>5.</b> Dán nội dung file JSON vào ô bên trên → nhấn <b>"Phân tích JSON Key"</b>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">🏥 Thông tin Bệnh viện & BYT</div></div>
+          <div class="card-body">
+            <div class="form-group mb-14"><label class="form-label">Tên bệnh viện</label><input type="text" class="form-input" id="cfg-hvname" placeholder="Bệnh viện..."/></div>
+            <div class="form-group mb-14"><label class="form-label">Tỉnh/Thành phố</label><input type="text" class="form-input" id="cfg-province" placeholder="Đồng Nai"/></div>
+            <div class="form-group mb-14"><label class="form-label">Hạng bệnh viện</label><select class="form-select" id="cfg-hang"><option value="">--Chọn--</option><option>Hạng đặc biệt</option><option>Hạng I</option><option>Hạng II</option><option>Hạng III</option><option>Không xếp hạng</option></select></div>
+            <div class="divider"></div>
+            <div class="settings-sec-title">Tài khoản BYT (hailong.chatluongbenhvien.vn)</div>
+            <div class="form-group mb-14"><label class="form-label">Tên đăng nhập</label><input type="text" class="form-input" id="cfg-bytuser" placeholder="username..."/></div>
+            <div class="form-group mb-14"><label class="form-label">Mật khẩu</label><input type="password" class="form-input" id="cfg-bytpass" placeholder="••••••••"/><div style="font-size:10px;color:#E65100;margin-top:2px;">⚠️ Mã hoá và lưu trên Sheets</div></div>
+            <div class="divider"></div>
+            <div class="settings-sec-title">Tự động gửi phiếu lên BYT</div>
+            <div class="form-group mb-14" style="flex-direction:row;align-items:center;gap:10px;">
+              <input type="checkbox" id="cfg-auto-upload-settings" style="width:18px;height:18px;cursor:pointer;accent-color:var(--accent);" onchange="syncAutoUploadCheckbox(this.checked)">
+              <label class="form-label" style="cursor:pointer;margin:0;" for="cfg-auto-upload-settings">Bật tự động gửi BYT khi lưu phiếu mới</label>
+            </div>
+            <div class="info-box" style="font-size:11.5px;">💡 Khi bật, mỗi lần lưu phiếu mới hệ thống sẽ tự động tạo script và mở trang BYT để điền dữ liệu. Cần có tài khoản BYT ở trên.</div>
+            <button class="btn btn-primary" onclick="saveCfgAll()" style="width:100%;margin-top:12px">💾 Lưu & Đồng bộ Sheets</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">🗄️ Quản lý dữ liệu cục bộ</div></div>
+          <div class="card-body">
+            <div id="local-info" style="font-size:12.5px;color:var(--text2);margin-bottom:12px;"></div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px;">
+              <button class="btn btn-outline btn-sm" onclick="exportJSON()">📥 Xuất JSON</button>
+              <button class="btn btn-outline btn-sm" onclick="exportCSV()">📥 Xuất CSV</button>
+              <button class="btn btn-danger btn-sm" onclick="confirmClear()">🗑️ Xóa local</button>
+            </div>
+            <input type="file" id="import-file" accept=".json" style="display:none" onchange="importJSON(event)"/>
+            <button class="btn btn-outline btn-sm" onclick="document.getElementById('import-file').click()">📤 Import JSON</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">📖 Hướng dẫn cài đặt Google Sheets</div></div>
+          <div class="card-body">
+            <div style="font-size:11.5px;color:var(--text2);line-height:1.9;">
+              <b>1.</b> console.cloud.google.com → New Project<br>
+              <b>2.</b> APIs &amp; Services → Enable "<b>Google Sheets API</b>"<br>
+              <b>3.</b> Credentials → Create <b>API Key</b> → Restrict to Sheets API<br>
+              <b>4.</b> Tạo Spreadsheet mới → Chia sẻ <b>"Anyone with link – Editor"</b><br>
+              <b>5.</b> Copy Spreadsheet ID từ URL → Dán vào ô trên<br>
+              <b>6.</b> Nhấn <b>"Tạo cấu trúc Sheets"</b> để tự động tạo các tab<br>
+              <b>7.</b> Nhấn <b>"Kiểm tra kết nối"</b> → Xanh là thành công ✅<br>
+              <b>8.</b> Nhấn <b>"Đẩy toàn bộ lên Sheets"</b> để đồng bộ lần đầu
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== USER MANAGEMENT ===== -->
+    <div class="page" id="page-users">
+      <!-- Account Requests Notification Panel (Admin Only) -->
+      <div class="card mb-14" id="acct-requests-panel">
+        <div class="card-header">
+          <div class="card-title">🔔 Yêu cầu tài khoản từ người dùng <span id="req-badge" style="display:none;background:var(--accent2);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:6px;">0</span></div>
+          <div class="flex-gap">
+            <button class="btn btn-outline btn-sm" onclick="renderAccountRequests()">🔄 Làm mới</button>
+            <button class="btn btn-danger btn-sm" onclick="clearAllRequests()">🗑️ Xóa hết</button>
+          </div>
+        </div>
+        <div class="card-body" id="acct-requests-body">
+          <div class="empty-state" style="padding:20px;"><div class="empty-icon" style="font-size:30px;">📭</div><div class="empty-text" style="font-size:13px;">Chưa có yêu cầu nào</div></div>
+        </div>
+      </div>
+      <!-- User List -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">👥 Quản lý tài khoản hệ thống</div>
+          <div class="flex-gap">
+            <button class="btn btn-outline btn-sm" onclick="exportUsersCSV()">📥 Xuất CSV</button>
+            <button class="btn btn-primary btn-sm" onclick="openAddUser()">➕ Thêm tài khoản</button>
+          </div>
+        </div>
+        <div style="padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:12px;color:var(--text3);">
+          💡 <b>Tip:</b> Click ✏️ để sửa thông tin. Click 🔑 để reset mật khẩu về mặc định. Tài khoản admin luôn được bảo vệ.
+        </div>
+        <div class="table-wrap" id="user-list-table"></div>
+      </div>
+    </div>
+
+    <!-- ===== MY PROFILE PAGE (user-only) ===== -->
+    <div class="page" id="page-profile">
+      <div style="max-width:600px;margin:0 auto;">
+        <div class="card mb-14">
+          <div class="card-header">
+            <div class="card-title">👤 Thông tin tài khoản cá nhân</div>
+            <span id="profile-role-badge" class="chip chip-green">Nhân viên Y tế</span>
+          </div>
+          <div class="card-body">
+            <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;padding:16px;background:var(--surface2);border-radius:var(--radius-sm);">
+              <div id="profile-avatar" style="width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--accent));display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;">👤</div>
+              <div>
+                <div id="profile-fullname" style="font-size:18px;font-weight:800;color:var(--primary);">---</div>
+                <div id="profile-username" style="font-size:12px;color:var(--text3);margin-top:2px;">@---</div>
+                <div id="profile-dept-display" style="font-size:12px;color:var(--text2);margin-top:3px;"></div>
+              </div>
+            </div>
+            <div class="form-grid">
+              <div class="form-group">
+                <label class="form-label">Họ tên hiển thị <span class="req">*</span></label>
+                <input type="text" class="form-input" id="prof-fullname" placeholder="Họ và tên"/>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Khoa/Phòng công tác</label>
+                <select class="form-select" id="prof-dept"><option value="">--Chọn khoa--</option></select>
+              </div>
+            </div>
+            <div class="flex-gap mt-14">
+              <button class="btn btn-primary" onclick="saveMyProfile()">💾 Lưu thông tin</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🔐 Đổi mật khẩu</div>
+          </div>
+          <div class="card-body">
+            <div class="warn-box mb-14" style="font-size:12px;">⚠️ Sau khi đổi mật khẩu, bạn sẽ cần đăng nhập lại với mật khẩu mới.</div>
+            <div class="form-group mb-14">
+              <label class="form-label">Mật khẩu hiện tại <span class="req">*</span></label>
+              <div style="position:relative;">
+                <input type="password" class="form-input" id="prof-pw-current" placeholder="Nhập mật khẩu hiện tại..." style="padding-right:44px;"/>
+                <button type="button" onclick="togglePwVis('prof-pw-current',this)" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);">👁</button>
+              </div>
+            </div>
+            <div class="form-group mb-14">
+              <label class="form-label">Mật khẩu mới <span class="req">*</span></label>
+              <div style="position:relative;">
+                <input type="password" class="form-input" id="prof-pw-new" placeholder="Tối thiểu 6 ký tự..." style="padding-right:44px;" oninput="checkPwStrength(this.value)"/>
+                <button type="button" onclick="togglePwVis('prof-pw-new',this)" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);">👁</button>
+              </div>
+              <div id="pw-strength-bar" style="margin-top:6px;display:none;">
+                <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden;">
+                  <div id="pw-strength-fill" style="height:100%;border-radius:2px;transition:all .3s;"></div>
+                </div>
+                <div id="pw-strength-label" style="font-size:10px;margin-top:3px;font-weight:600;"></div>
+              </div>
+            </div>
+            <div class="form-group mb-14">
+              <label class="form-label">Xác nhận mật khẩu mới <span class="req">*</span></label>
+              <input type="password" class="form-input" id="prof-pw-confirm" placeholder="Nhập lại mật khẩu mới..."/>
+            </div>
+            <div id="prof-pw-err" class="login-err" style="display:none;margin-bottom:10px;"></div>
+            <button class="btn btn-success" onclick="changeMyPassword()">🔐 Đổi mật khẩu</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== DEPARTMENT MANAGEMENT ===== -->
+    <div class="page" id="page-depts">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🏬 Danh mục Khoa / Phòng</div>
+            <button class="btn btn-primary btn-sm" onclick="openAddDept()">➕ Thêm</button>
+          </div>
+          <div class="card-body">
+            <div class="info-box mb-14">💡 Danh mục này sẽ tạo dropdown cho các ô "Chọn Khoa/Phòng" trên tất cả phiếu khảo sát. Nhập đầy đủ giúp nhập liệu nhanh hơn và chính xác hơn.</div>
+            <div id="dept-list"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">📥 Import nhanh danh mục</div></div>
+          <div class="card-body">
+            <div class="form-group mb-14">
+              <label class="form-label">Dán danh sách Khoa/Phòng (mỗi dòng 1 khoa)</label>
+              <textarea class="form-textarea" id="dept-bulk-input" style="min-height:180px;" placeholder="Khoa Nội tổng hợp&#10;Khoa Ngoại tổng hợp&#10;Khoa Nhi&#10;Khoa Sản&#10;Khoa Hồi sức cấp cứu&#10;Khoa Cấp cứu&#10;Khoa Xét nghiệm&#10;Khoa Chẩn đoán hình ảnh&#10;Khoa Dược&#10;Phòng khám Nội&#10;Phòng khám Ngoại&#10;Phòng khám Sản phụ khoa&#10;Phòng khám Nhi&#10;..."></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="bulkImportDepts()">📥 Import danh mục</button>
+            <div class="divider"></div>
+            <div class="settings-sec-title">Danh mục mẫu gợi ý</div>
+            <button class="btn btn-outline btn-sm" onclick="loadSampleDepts()">📋 Tải danh mục mẫu BV tuyến huyện</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end main-content -->
+</div><!-- end app-shell -->
+
+<!-- MODALS -->
+<div class="modal-backdrop" id="modal-detail">
+  <div class="modal modal-lg">
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title" id="modal-detail-title">Chi tiết phiếu</div><button class="close-btn" onclick="closeModal('modal-detail')">✕</button></div>
+    <div class="modal-body" id="modal-detail-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-detail')">Đóng</button>
+      <button class="btn btn-danger btn-sm" id="btn-del-record">🗑️ Xóa</button>
+      <button class="btn btn-accent btn-sm" id="btn-af-record">⚡ Autofill</button>
+      <button class="btn btn-success btn-sm" id="btn-byt-record">📤 Gửi BYT</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-confirm">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title">⚠️ Xác nhận</div><button class="close-btn" onclick="closeModal('modal-confirm')">✕</button></div>
+    <div class="modal-body"><p id="confirm-msg" style="font-size:14px;color:var(--text2);line-height:1.6;"></p></div>
+    <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('modal-confirm')">Hủy</button><button class="btn btn-danger" id="confirm-ok">Xác nhận</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-user">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title" id="modal-user-title">Thêm tài khoản</div><button class="close-btn" onclick="closeModal('modal-user')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="mu-id"/>
+      <div class="form-group mb-14"><label class="form-label">Tên đăng nhập <span class="req">*</span></label><input type="text" class="form-input" id="mu-username" placeholder="VD: nguyen_van_a" autocapitalize="none"/></div>
+      <div class="form-group mb-14"><label class="form-label">Họ tên hiển thị <span class="req">*</span></label><input type="text" class="form-input" id="mu-fullname" placeholder="Nguyễn Văn A"/></div>
+      <div class="form-group mb-14">
+        <label class="form-label">Vai trò <span class="req">*</span></label>
+        <select class="form-select" id="mu-role">
+          <option value="user">👤 Nhân viên Y tế (User)</option>
+          <option value="admin">🔑 Quản trị viên (Admin)</option>
+        </select>
+      </div>
+      <div class="form-group mb-14"><label class="form-label">Khoa/Phòng công tác</label><select class="form-select" id="mu-dept"><option value="">--Chọn khoa--</option></select></div>
+      <div class="form-group mb-14"><label class="form-label">Mật khẩu <span class="req">*</span></label><input type="password" class="form-input" id="mu-password" placeholder="Mật khẩu mới..."/></div>
+      <div class="form-group"><label class="form-label">Xác nhận mật khẩu</label><input type="password" class="form-input" id="mu-password2" placeholder="Nhập lại..."/></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-user')">Hủy</button>
+      <button class="btn btn-primary" onclick="saveUser()">💾 Lưu tài khoản</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: ACCOUNT REQUEST ===== -->
+<div class="modal-backdrop" id="modal-account-request">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title" id="acct-req-title">📋 Yêu cầu cấp tài khoản</div>
+      <button class="close-btn" onclick="closeModal('modal-account-request')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="acct-req-type-badge" class="info-box mb-14" style="font-size:12.5px;"></div>
+      <input type="hidden" id="acct-req-type"/>
+      <div class="form-group mb-14">
+        <label class="form-label">Họ và tên <span class="req">*</span></label>
+        <input type="text" class="form-input" id="acct-req-fullname" placeholder="Nhập họ tên đầy đủ..."/>
+      </div>
+      <div class="form-group mb-14" id="acct-req-username-group">
+        <label class="form-label">Tên đăng nhập <span class="req">*</span></label>
+        <input type="text" class="form-input" id="acct-req-username" placeholder="VD: nguyen_van_a" autocapitalize="none"/>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:3px;">Chỉ dùng chữ thường, số, dấu gạch dưới. Không dấu cách.</div>
+      </div>
+      <div class="form-group mb-14">
+        <label class="form-label">Số điện thoại / Email liên hệ <span class="req">*</span></label>
+        <input type="text" class="form-input" id="acct-req-contact" placeholder="SĐT hoặc email để admin liên hệ"/>
+      </div>
+      <div class="form-group mb-14">
+        <label class="form-label">Khoa/Phòng công tác</label>
+        <input type="text" class="form-input" id="acct-req-dept" placeholder="VD: Khoa Nội tổng hợp"/>
+      </div>
+      <div class="form-group mb-14">
+        <label class="form-label">Lý do / Ghi chú</label>
+        <textarea class="form-textarea" id="acct-req-note" placeholder="Mô tả lý do yêu cầu tài khoản hoặc thông tin bổ sung..."></textarea>
+      </div>
+      <div id="acct-req-err" style="display:none;padding:8px 12px;background:#fff0f0;border-radius:8px;border-left:3px solid var(--accent2);font-size:12.5px;color:var(--accent2);margin-bottom:10px;"></div>
+      <div class="success-box" style="font-size:12px;">
+        ℹ️ Yêu cầu sẽ được lưu lại và thông báo đến Admin khi họ đăng nhập. Admin sẽ liên hệ theo thông tin bạn cung cấp.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-account-request')">Hủy</button>
+      <button class="btn btn-primary" onclick="submitAccountRequest()">📤 Gửi yêu cầu</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: CHANGE PASSWORD (Admin reset user) ===== -->
+<div class="modal-backdrop" id="modal-reset-user-pw">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">🔑 Reset mật khẩu tài khoản</div>
+      <button class="close-btn" onclick="closeModal('modal-reset-user-pw')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="warn-box mb-14" style="font-size:12.5px;">⚠️ Đặt lại mật khẩu cho tài khoản: <b id="reset-user-display"></b></div>
+      <input type="hidden" id="reset-user-id"/>
+      <div class="form-group mb-14">
+        <label class="form-label">Mật khẩu mới <span class="req">*</span></label>
+        <div style="position:relative;">
+          <input type="password" class="form-input" id="reset-pw-new" placeholder="Nhập mật khẩu mới..." style="padding-right:44px;"/>
+          <button type="button" onclick="togglePwVis('reset-pw-new',this)" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);">👁</button>
+        </div>
+      </div>
+      <div class="form-group mb-14">
+        <label class="form-label">Xác nhận mật khẩu <span class="req">*</span></label>
+        <input type="password" class="form-input" id="reset-pw-confirm" placeholder="Nhập lại mật khẩu mới..."/>
+      </div>
+      <div class="info-box" style="font-size:12px;">💡 Mật khẩu mặc định gợi ý: <b>BV@2024</b> (Admin nên thông báo cho người dùng đổi lại)</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" onclick="setDefaultPassword()">🔄 Dùng mặc định (BV@2024)</button>
+      <button class="btn btn-outline" onclick="closeModal('modal-reset-user-pw')">Hủy</button>
+      <button class="btn btn-danger" onclick="doResetUserPassword()">🔑 Đặt lại mật khẩu</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-dept">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-handle"></div>
+    <div class="modal-header"><div class="modal-title" id="modal-dept-title">Thêm Khoa/Phòng</div><button class="close-btn" onclick="closeModal('modal-dept')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="md-id"/>
+      <div class="form-group mb-14"><label class="form-label">Tên Khoa/Phòng <span class="req">*</span></label><input type="text" class="form-input" id="md-name" placeholder="VD: Khoa Nội tổng hợp"/></div>
+      <div class="form-group mb-14"><label class="form-label">Mã khoa (tuỳ chọn)</label><input type="text" class="form-input" id="md-code" placeholder="VD: KNT"/></div>
+      <div class="form-group">
+        <label class="form-label">Loại</label>
+        <select class="form-select" id="md-type">
+          <option value="lamsang">Lâm sàng (Khoa điều trị)</option>
+          <option value="kham">Phòng khám</option>
+          <option value="canlam">Cận lâm sàng</option>
+          <option value="hanhchinh">Hành chính / Chức năng</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-dept')">Hủy</button>
+      <button class="btn btn-primary" onclick="saveDept()">💾 Lưu</button>
+    </div>
+  </div>
+</div>
+
+
+  <!-- ============================================================
+       JavaScript modules – Load từ GitHub via jsDelivr CDN
+       Thay YOUR_GITHUB_USERNAME/YOUR_REPO_NAME bằng repo thực tế
+       Ví dụ: https://cdn.jsdelivr.net/gh/bvdongna/kshl@main/js/config.js
+  ============================================================ -->
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/sheets.js"></script>
+  <script src="js/users.js"></script>
+  <script src="js/surveys.js"></script>
+  <script src="js/dashboard.js"></script>
+  <script src="js/byt.js"></script>
+  <script src="js/reports.js"></script>
+
+</body>
+</html>
