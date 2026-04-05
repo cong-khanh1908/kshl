@@ -13,12 +13,30 @@ const SA_DEFAULT = {
 
 // =========================================================
 // SPREADSHEET ID MẶC ĐỊNH
-// Admin nhập 1 lần trên bất kỳ thiết bị nào,
-// các thiết bị khác sẽ tự tải về từ Cloud.
-// Nếu admin đã cấu hình, điền ID vào đây để
-// tất cả thiết bị mới không cần nhập lại.
+// ★ ADMIN: Điền ID Spreadsheet của bệnh viện vào đây (1 lần duy nhất)
+// → Tất cả thiết bị mới mở app sẽ tự kết nối mà KHÔNG cần nhập lại
+// Ví dụ: const SHEETID_DEFAULT = '1lDISGhLVAkUussZMtU9HqFYVYp4H...';
 // =========================================================
-const SHEETID_DEFAULT = ''; // Ví dụ: '1lDISGhLVAkUussZMtU9HqFYVYp4H...'
+const SHEETID_DEFAULT = '1lDlSGhLVAkUussZMtU9HqFYVYp4HNOj3DBl5ATkbWrw'; // ← ADMIN ĐIỀN VÀO ĐÂY
+
+// ★ FIX MOBILE: Đọc ?sid= từ URL TRƯỚC KHI đọc localStorage
+// → Khi admin gửi link có ?sid=..., mobile tự kết nối ngay lần đầu
+(function readUrlSid() {
+  try {
+    const p = new URLSearchParams(location.search);
+    const urlSid = (p.get('sid') || p.get('sheetid') || '').trim();
+    if (urlSid) {
+      // Ghi vào localStorage ngay để các module sau dùng được
+      const stored = JSON.parse(localStorage.getItem('kshl_v4_cfg') || '{}');
+      if (!stored.sheetid) {
+        stored.sheetid = urlSid;
+        localStorage.setItem('kshl_v4_cfg', JSON.stringify(stored));
+      }
+      // Dọn URL (xóa ?sid= để gọn)
+      history.replaceState({}, document.title, location.pathname + location.hash);
+    }
+  } catch(e) { /* silent */ }
+})();
 
 // =========================================================
 // STATE

@@ -65,6 +65,11 @@
       </div>
       <div class="bs-status" id="bs-status" style="margin-top:8px;font-size:12px;color:var(--text2);text-align:center;min-height:20px;"></div>
 
+      <!-- Gợi ý dành cho admin nhận link chia sẻ từ đồng nghiệp -->
+      <div id="bs-shared-hint" style="display:none;background:#E8F5E9;border:1px solid #A5D6A7;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:11px;color:#1B5E20;line-height:1.7;">
+        💡 <b>Nhận được link từ đồng nghiệp?</b> Mở đúng link đó (có ?sid=...) thay vì mở trực tiếp – ứng dụng sẽ tự cấu hình!
+      </div>
+
       <!-- Liên kết tạo Sheets mới -->
       <div style="text-align:center;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
         <div style="font-size:11px;color:var(--text3);margin-bottom:8px;">Chưa có Google Sheets?</div>
@@ -641,6 +646,37 @@
               <button class="btn btn-outline btn-sm" onclick="gsPullAllData(true)">⬇️ Kéo từ Sheets</button>
             </div>
             <div id="gs-sync-status" style="margin-top:8px;font-size:11.5px;color:var(--text2);"></div>
+
+            <div class="divider"></div>
+
+            <!-- MOBILE SHARE LINK SECTION -->
+            <div class="settings-sec-title">📱 Chia sẻ cho thiết bị Mobile</div>
+            <div style="background:#E8F5E9;border:1px solid #A5D6A7;border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:11.5px;color:#1B5E20;line-height:1.8;">
+              <b>✅ Thiết bị mới không cần cấu hình lại!</b><br>
+              Gửi link hoặc QR code bên dưới cho nhân viên — khi mở link, ứng dụng tự kết nối Cloud ngay.
+            </div>
+            <div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px;">
+              <div style="font-size:11px;color:var(--text3);margin-bottom:5px;font-weight:600;">🔗 Link chia sẻ (có kèm Spreadsheet ID):</div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <input type="text" id="share-link-input" readonly
+                  style="flex:1;font-size:10.5px;font-family:monospace;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:#F5F5F5;color:#333;cursor:pointer;"
+                  onclick="this.select()" placeholder="Lưu cấu hình trước để tạo link..."/>
+                <button onclick="copyShareLink()"
+                  style="background:#1565C0;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;">
+                  📋 Copy
+                </button>
+              </div>
+              <div id="share-link-status" style="font-size:10px;color:var(--text3);margin-top:4px;"></div>
+            </div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap;">
+              <button class="btn btn-outline btn-sm" onclick="generateShareQR()" style="flex:1;">📷 Tạo QR Code</button>
+              <button class="btn btn-outline btn-sm" onclick="shareToZalo()" style="flex:1;">💬 Gửi Zalo</button>
+            </div>
+            <div id="share-qr-container" style="margin-top:10px;text-align:center;display:none;">
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px;">Quét bằng camera điện thoại để mở ứng dụng đã cấu hình sẵn:</div>
+              <canvas id="share-qr-canvas" style="border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.12);"></canvas>
+              <div style="font-size:10px;color:var(--text3);margin-top:4px;">Nhấn chuột phải → Lưu ảnh để in QR code</div>
+            </div>
 
             <div class="divider"></div>
             <div class="card" style="background:#F8F9FA;border:1px dashed #CFD8DC;">

@@ -7,6 +7,16 @@
 // =========================================================
 
 async function appBootstrap() {
+  // ★ FIX MOBILE: Đọc ?sid= từ URL — admin chia sẻ link là xong
+  const urlParams = new URLSearchParams(location.search);
+  const urlSid = (urlParams.get('sid') || urlParams.get('sheetid') || '').trim();
+  if (urlSid && !CFG.sheetid) {
+    CFG.sheetid = urlSid;
+    try { localStorage.setItem('kshl_v4_cfg', JSON.stringify(CFG)); } catch(e) {}
+    // Xóa param khỏi URL (gọn hơn, bảo mật hơn) mà không reload trang
+    history.replaceState({}, document.title, location.pathname + location.hash);
+  }
+
   if (!CFG.sheetid) {
     // Thiết bị mới chưa có sheetid → hiện màn hình thiết lập
     document.getElementById('bootstrap-screen').classList.remove('hidden');

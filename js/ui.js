@@ -95,6 +95,7 @@ function showPage(name){
   if(name==='bytupload'){renderBYTQueue();loadAutoUploadCheckboxes();}
   if(name==='baocao'){renderBaoCaoPreview();}
   if(name==='history'){loadHistoryPreview();}
+  if(name==='settings'){refreshShareLink();}
   updateBottomNavActive(name);
   // Close sidebar on mobile when navigating
   if(window.innerWidth<=768) closeSidebar();

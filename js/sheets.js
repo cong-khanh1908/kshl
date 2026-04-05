@@ -70,6 +70,7 @@ function saveCfgSheets(){
   saveCFG();
   if (!CFG.sheetid) { toast('⚠️ Vui lòng nhập Spreadsheet ID', 'warning'); return; }
   loadCfgToUI();
+  refreshShareLink();
   toast('✅ Đã lưu – đang kiểm tra kết nối...', 'success');
   setTimeout(() => testSheets(), 400);
 }
@@ -622,3 +623,86 @@ async function gsLogHistory(action, detail) {
   } catch(e) { /* silent */ }
 }
 
+
+// =========================================================
+// MOBILE SHARE LINK & QR CODE
+// =========================================================
+
+/** Tạo link chia sẻ có kèm ?sid= để mobile tự động cấu hình */
+function getShareLink() {
+  const sid = CFG.sheetid || '';
+  if (!sid) return '';
+  const base = location.origin + location.pathname;
+  return `${base}?sid=${encodeURIComponent(sid)}`;
+}
+
+/** Cập nhật ô link chia sẻ khi mở trang Cấu hình */
+function refreshShareLink() {
+  const inp = document.getElementById('share-link-input');
+  if (!inp) return;
+  const link = getShareLink();
+  inp.value = link || '';
+  inp.placeholder = link ? '' : 'Chưa có Spreadsheet ID — lưu cấu hình trước';
+  const status = document.getElementById('share-link-status');
+  if (status) {
+    if (link) {
+      status.textContent = '✅ Gửi link này cho nhân viên, mở link là tự động kết nối';
+      status.style.color = '#2E7D32';
+    } else {
+      status.textContent = '⚠️ Nhập Spreadsheet ID và nhấn Lưu trước';
+      status.style.color = '#E65100';
+    }
+  }
+}
+
+/** Copy link chia sẻ vào clipboard */
+async function copyShareLink() {
+  const link = getShareLink();
+  if (!link) { toast('⚠️ Chưa có Spreadsheet ID – lưu cấu hình trước', 'warning'); return; }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(link);
+    } else {
+      const el = document.getElementById('share-link-input');
+      el.select(); document.execCommand('copy');
+    }
+    toast('📋 Đã copy link chia sẻ!', 'success');
+    const status = document.getElementById('share-link-status');
+    if (status) { status.textContent = '✅ Đã copy! Dán vào Zalo/Email gửi cho nhân viên'; status.style.color = '#2E7D32'; }
+  } catch(e) {
+    toast('⚠️ Không copy được – thử chọn và copy thủ công', 'warning');
+  }
+}
+
+/** Gửi link qua Zalo (mở Zalo share) */
+function shareToZalo() {
+  const link = getShareLink();
+  if (!link) { toast('⚠️ Chưa có Spreadsheet ID – lưu cấu hình trước', 'warning'); return; }
+  const text = encodeURIComponent(`📱 Mở link này để dùng ứng dụng Khảo sát Hài lòng (tự động kết nối, không cần cấu hình):\n${link}`);
+  // Zalo share URL
+  window.open(`https://zalo.me/share?text=${text}`, '_blank');
+}
+
+/** Tạo QR code bằng canvas thuần (không cần thư viện ngoài) */
+async function generateShareQR() {
+  const link = getShareLink();
+  if (!link) { toast('⚠️ Chưa có Spreadsheet ID – lưu cấu hình trước', 'warning'); return; }
+
+  const container = document.getElementById('share-qr-container');
+  const canvas = document.getElementById('share-qr-canvas');
+  if (!container || !canvas) return;
+
+  // Dùng QR code API miễn phí (không cần key)
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(link)}&format=svg&qzone=2`;
+  
+  // Hiển thị bằng <img> thay vì canvas để đơn giản hơn
+  container.style.display = '';
+  container.innerHTML = `
+    <div style="font-size:11px;color:var(--text2);margin-bottom:8px;">📷 Quét bằng camera điện thoại để mở ứng dụng đã cấu hình sẵn:</div>
+    <img src="${qrUrl}" alt="QR Code" style="width:200px;height:200px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.12);border:3px solid #fff;" 
+         onerror="this.parentElement.innerHTML='<div style=color:#E53935;font-size:12px;>❌ Không tải được QR — kiểm tra internet</div>'" />
+    <div style="font-size:10px;color:var(--text3);margin-top:6px;">Nhấn giữ ảnh → Lưu để in QR code</div>
+    <div style="font-size:10px;color:#0D47A1;margin-top:4px;word-break:break-all;background:#E8F0FE;padding:5px 8px;border-radius:6px;">${link}</div>
+  `;
+  toast('📷 QR Code đã tạo!', 'success');
+}
