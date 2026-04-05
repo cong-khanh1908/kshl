@@ -88,12 +88,16 @@ async function checkBYTLoginStatus() {
   setBYTStatusUI('checking', '🔄 Đang kiểm tra kết nối đến trang BYT...');
   if (loginBtn) loginBtn.style.display = 'none';
 
+  // ★ KHÔNG fetch /user/me → endpoint này không tồn tại trên BYT (404)
+  // ★ KHÔNG dùng iframe → bị chặn bởi X-Frame-Options: sameorigin
+  // Chiến lược đúng: ping server bằng no-cors HEAD, sau đó hướng dẫn
+  // đăng nhập thủ công qua popup (không thể đọc session cross-origin)
+
   try {
     const ctrl  = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const timer = setTimeout(() => ctrl.abort(), 6000);
 
-    // Fetch với no-cors để kiểm tra server còn hoạt động
-    await fetch(BYT_BASE + '/user/login', {
+    await fetch(BYT_BASE, {
       method: 'HEAD',
       mode: 'no-cors',
       cache: 'no-store',
@@ -101,19 +105,26 @@ async function checkBYTLoginStatus() {
     });
     clearTimeout(timer);
 
-    // Server phản hồi OK – nhưng không đọc được cookie/session (cross-origin)
-    // Yêu cầu người dùng đăng nhập thủ công qua popup
+    // Server BYT đang hoạt động – hướng dẫn người dùng
     setBYTStatusUI('unknown',
-      '⚠️ Không thể xác minh tự động (trình duyệt bảo mật cross-origin). ' +
-      'Nhấn "Đăng nhập BYT" để mở cửa sổ đăng nhập, sau đó gửi phiếu.');
+      '🔓 Trang BYT đang hoạt động. Do chính sách bảo mật trình duyệt, ' +
+      'không thể tự động kiểm tra phiên đăng nhập. ' +
+      'Nhấn "Đăng nhập BYT" để đăng nhập và gửi phiếu.');
     if (loginBtn) loginBtn.style.display = '';
     bytLoginStatus = 'unknown';
 
   } catch(e) {
     if (e.name === 'AbortError') {
-      setBYTStatusUI('error', '❌ Timeout – không kết nối được đến trang BYT. Kiểm tra mạng.');
+      setBYTStatusUI('error', '❌ Timeout – không kết nối được trang BYT. Kiểm tra mạng.');
+    } else if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
+      // no-cors thường không throw trừ khi offline hoàn toàn
+      setBYTStatusUI('error', '❌ Không thể kết nối trang BYT. Kiểm tra kết nối mạng.');
     } else {
-      setBYTStatusUI('error', '❌ Lỗi kết nối: ' + e.message);
+      // Fetch no-cors thành công (opaque response không throw)
+      setBYTStatusUI('unknown', '🔓 Nhấn "Đăng nhập BYT" để đăng nhập và gửi phiếu.');
+      if (loginBtn) loginBtn.style.display = '';
+      bytLoginStatus = 'unknown';
+      return;
     }
     if (loginBtn) loginBtn.style.display = '';
     bytLoginStatus = 'error';
@@ -162,29 +173,68 @@ function loginBYTNow() {
       const curUrl = win.location.href || '';
       const ready  = win.document.readyState === 'complete';
 
-      // Trang login đã load – điền thông tin
-      if (!injected && ready && (curUrl.includes('/user/login') || curUrl.includes('login'))) {
+      // ★ Trang login đã load hoàn toàn – chờ thêm 800ms để Drupal 7 JS khởi tạo
+      if (!injected && ready && curUrl.includes('/user/login')) {
         injected = true;
-        try {
-          win.eval(`(function(){
-            var u=document.querySelector('#edit-name,input[name="name"]');
-            var p=document.querySelector('#edit-pass,input[name="pass"]');
-            var b=document.querySelector('#edit-submit,input[type="submit"],button[type="submit"]');
-            if(u&&p){
-              u.value=${JSON.stringify(user)};
-              p.value=${JSON.stringify(pass)};
-              u.dispatchEvent(new Event('input',{bubbles:true}));
-              p.dispatchEvent(new Event('input',{bubbles:true}));
-              if(b)b.click();
+        addBYTLog('info', 'Trang login BYT đã tải – đang điền thông tin...');
+
+        setTimeout(() => {
+          try {
+            const fillResult = win.eval(`(function(){
+              // ★ Drupal 7 chuẩn: ID là edit-name, edit-pass, edit-submit
+              // Thêm nhiều selector dự phòng cho các custom theme
+              var u = document.getElementById('edit-name') ||
+                      document.querySelector('input[name="name"]') ||
+                      document.querySelector('input[type="text"][id*="name"]') ||
+                      document.querySelector('.form-item-name input, .form-item-thi-khoản-đăng-nhập input') ||
+                      document.querySelector('input[autocomplete="username"]') ||
+                      document.querySelector('form input[type="text"]:first-of-type');
+
+              var p = document.getElementById('edit-pass') ||
+                      document.querySelector('input[name="pass"]') ||
+                      document.querySelector('input[type="password"]') ||
+                      document.querySelector('.form-item-pass input') ||
+                      document.querySelector('input[autocomplete="current-password"]');
+
+              var b = document.getElementById('edit-submit') ||
+                      document.querySelector('input[type="submit"][value*="Đăng"]') ||
+                      document.querySelector('input[type="submit"][value*="đăng"]') ||
+                      document.querySelector('input[type="submit"][value*="Log"]') ||
+                      document.querySelector('input[type="submit"][value*="login"]') ||
+                      document.querySelector('input[type="submit"]') ||
+                      document.querySelector('button[type="submit"]');
+
+              if (!u) return 'ERR:Không tìm thấy ô Tài khoản đăng nhập';
+              if (!p) return 'ERR:Không tìm thấy ô Mật khẩu';
+
+              u.value = ${JSON.stringify(user)};
+              p.value = ${JSON.stringify(pass)};
+
+              // Kích hoạt events để Drupal validation chạy
+              ['input','change','keyup','blur'].forEach(function(ev) {
+                u.dispatchEvent(new Event(ev, {bubbles:true}));
+                p.dispatchEvent(new Event(ev, {bubbles:true}));
+              });
+
+              if (b) {
+                // Thêm delay nhỏ để Drupal xử lý events xong rồi mới click
+                setTimeout(function(){ b.click(); }, 200);
+                return 'OK:Đã điền và click "' + (b.value || b.textContent.trim() || 'submit') + '"';
+              }
+              return 'OK:Đã điền (không tìm thấy nút Submit)';
+            })()`);
+
+            addBYTLog('info', 'Auto-fill: ' + fillResult);
+            if (fillResult && fillResult.startsWith('ERR:')) {
+              addBYTLog('warn', '⚠️ ' + fillResult + ' → hãy điền thủ công trên cửa sổ BYT');
             }
-          })()`);
-          addBYTLog('info', 'Đã điền thông tin đăng nhập BYT và click Submit');
-        } catch(fillErr) {
-          addBYTLog('warn', 'Không thể auto-fill: ' + fillErr.message);
-        }
+          } catch(fillErr) {
+            addBYTLog('warn', 'Lỗi auto-fill: ' + fillErr.message + ' → hãy điền thủ công');
+          }
+        }, 800); // ★ 800ms để Drupal JS khởi tạo xong
       }
 
-      // Đã redirect sang trang khác (đăng nhập thành công)
+      // ★ Đã redirect sang trang khác = đăng nhập thành công
       if (injected && ready && !curUrl.includes('/user/login') && curUrl.startsWith('http')) {
         redirected = true;
         clearInterval(iv);
@@ -192,12 +242,12 @@ function loginBYTNow() {
         setBYTStatusUI('logged-in', '✅ Đăng nhập BYT thành công! Sẵn sàng gửi phiếu.');
         const lb = document.getElementById('btn-byt-login-now');
         if (lb) lb.style.display = 'none';
-        addBYTLog('ok', 'Đăng nhập BYT thành công. URL: ' + curUrl);
+        addBYTLog('ok', '✅ Đăng nhập BYT thành công → ' + curUrl);
         setTimeout(() => { try { win.close(); } catch(x){} }, 1500);
       }
 
     } catch(e) {
-      // Cross-origin block → đã redirect sang trang BYT (đăng nhập thành công)
+      // Cross-origin block sau redirect = đăng nhập thành công
       if (injected && !redirected) {
         redirected = true;
         clearInterval(iv);
@@ -205,7 +255,7 @@ function loginBYTNow() {
         setBYTStatusUI('logged-in', '✅ Đăng nhập BYT thành công!');
         const lb = document.getElementById('btn-byt-login-now');
         if (lb) lb.style.display = 'none';
-        addBYTLog('ok', 'Đăng nhập BYT thành công (cross-origin redirect)');
+        addBYTLog('ok', '✅ Đăng nhập BYT thành công (cross-origin redirect)');
         setTimeout(() => { try { win.close(); } catch(x){} }, 1500);
       }
     }
@@ -213,12 +263,13 @@ function loginBYTNow() {
     if (attempts > 40) {
       clearInterval(iv);
       if (!redirected) {
-        setBYTStatusUI('unknown', '⚠️ Hết thời gian. Hãy đăng nhập thủ công trên cửa sổ BYT.');
-        addBYTLog('warn', 'Timeout chờ đăng nhập BYT');
+        setBYTStatusUI('unknown', '⚠️ Hết thời gian. Hãy đăng nhập thủ công trên cửa sổ BYT đang mở.');
+        addBYTLog('warn', 'Timeout 20 giây chờ đăng nhập BYT');
       }
     }
   }, 500);
 }
+
 
 // =========================================================
 // FIELD MAPPING: answer.code (VD: "A1") → BYT field name
