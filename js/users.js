@@ -520,7 +520,18 @@ async function gsPushAccountRequests() {
 
 // ── Kéo yêu cầu từ Cloud về (admin trên thiết bị khác có thể xem) ──
 async function gsPullAccountRequests() {
+  if (!gsReady()) return; // không gọi nếu chưa cấu hình Sheets
   try {
+    // Kiểm tra tab REQUESTS tồn tại trước khi đọc (tránh 400 Bad Request)
+    const tabs = await gsGetSheetsList().catch(() => []);
+    if (!tabs.includes('REQUESTS')) {
+      // Tab chưa tồn tại – tạo mới và bỏ qua (không có data)
+      await gsEnsureTab('REQUESTS', [
+        'ID','Loại','Họ tên','Tên đăng nhập','Liên hệ','Khoa/Phòng',
+        'Lý do','Ưu tiên','Trạng thái','Thời gian tạo','Thời gian xử lý'
+      ]).catch(() => {});
+      return;
+    }
     const data = await gsReadRange('REQUESTS!A2:K');
     if (!data || !data.length) return;
     const existing = getAccountRequests();
@@ -544,7 +555,7 @@ async function gsPullAccountRequests() {
       added++;
     });
     if (added) { localStorage.setItem(ACCT_REQUESTS_KEY, JSON.stringify(existing)); }
-  } catch(e) { /* silent */ }
+  } catch(e) { /* silent – không throw để không block enterApp */ }
 }
 
 // ── Mở modal theo loại ──

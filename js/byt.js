@@ -1,23 +1,37 @@
 // byt.js – Module gửi phiếu lên trang BYT (hailong.chatluongbenhvien.vn)
 // Thuộc dự án Khảo sát Hài lòng – QĐ 56/2024 & QĐ 3869/2019
+// Version: v4.0 – Rewrite hoàn chỉnh: fix cross-origin, field mapping đầy đủ 5 mẫu
 // ============================================================
 
 // =========================================================
-// BYT AUTO-UPLOAD MODULE
+// CONSTANTS
 // =========================================================
+const BYT_BASE      = 'https://hailong.chatluongbenhvien.vn';
+const BYT_LOGIN_URL = BYT_BASE + '/user/login';
 
-// BYT login URL and session check URL
-const BYT_LOGIN_URL = 'https://hailong.chatluongbenhvien.vn/user/login';
-const BYT_CHECK_URL = 'https://hailong.chatluongbenhvien.vn/user/me'; // profile page only accessible when logged in
-const BYT_BASE = 'https://hailong.chatluongbenhvien.vn';
+// Node IDs từng mẫu phiếu (webform-client-form-XXXXX)
+const BYT_NODE_IDS = { m1: 206847, m2: 206848, m3: 1468, m4: 22799, m5: 22800 };
 
-// BYT upload state
-let bytLoginWindow = null;
-let bytLoginStatus = 'unknown'; // unknown | checking | logged-in | logged-out | error
+// URL action của form submit
+const BYT_FORM_ACTIONS = {
+  m1: '/nguoi-benh-noi-tru-v2',
+  m2: '/nguoi-benh-ngoai-tru-v2',
+  m3: '/content/3-khao-sat-y-kien-nhan-vien-y-te',
+  m4: '/content/4-phieu-khao-sat-y-kien-nguoi-me-sinh-con-tai-benh-vien',
+  m5: '/content/5-phieu-khao-sat-thuc-hien-nuoi-con-bang-sua-me-tai-benh-vien-va-sau-ra-vien',
+};
+
+// =========================================================
+// STATE
+// =========================================================
+let bytLoginStatus   = 'unknown'; // unknown|checking|logged-in|logged-out|error
 let bytUploadRunning = false;
-let bytSelectedIds = new Set();
-let bytLog = [];
+let bytSelectedIds   = new Set();
+let bytLog           = [];
 
+// =========================================================
+// BADGE & CHECKBOX
+// =========================================================
 function updateBYTPendingBadge() {
   const pending = DB.surveys.filter(x => !x.bytStatus || x.bytStatus === 'pending').length;
   const b = document.getElementById('pendingBYTBadge');
@@ -27,7 +41,6 @@ function updateBYTPendingBadge() {
 function toggleAutoUpload(checked) {
   CFG.autoUploadBYT = checked;
   saveCFG();
-  // sync the settings page checkbox too
   const cb2 = document.getElementById('cfg-auto-upload-settings');
   if (cb2) cb2.checked = checked;
   toast(checked ? '✅ Đã bật tự động gửi BYT' : 'ℹ️ Đã tắt tự động gửi BYT', checked ? 'success' : 'info');
@@ -48,190 +61,437 @@ function loadAutoUploadCheckboxes() {
   if (cb2) cb2.checked = v;
 }
 
-// ---- BYT Login Status Check ----
-async function checkBYTLoginStatus() {
-  setBYTStatusUI('checking', '🔄 Đang kiểm tra trạng thái đăng nhập trang BYT...');
-  document.getElementById('btn-byt-login-now').style.display = 'none';
-  try {
-    // Try fetching a page that requires login; if redirected to login page = not logged in
-    const res = await fetch(BYT_CHECK_URL, {method:'GET', credentials:'include', mode:'no-cors', cache:'no-store'});
-    // With no-cors we can't read status, so we use a proxy approach via iframe detection
-    // Instead: open a hidden iframe and check its URL after load
-    checkBYTViaIframe();
-  } catch(e) {
-    setBYTStatusUI('error', '❌ Không thể kiểm tra: ' + e.message + '. Có thể do trình duyệt chặn cross-origin.');
-    document.getElementById('btn-byt-login-now').style.display = '';
-  }
-}
-
-function checkBYTViaIframe() {
-  // Remove old iframe if any
-  const old = document.getElementById('byt-check-iframe');
-  if (old) old.remove();
-
-  const iframe = document.createElement('iframe');
-  iframe.id = 'byt-check-iframe';
-  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
-  iframe.src = BYT_CHECK_URL;
-
-  let timeout = setTimeout(() => {
-    iframe.remove();
-    // If timeout: assume network issue but allow manual login
-    setBYTStatusUI('error', '⚠️ Không thể xác minh tự động (timeout). Vui lòng kiểm tra thủ công hoặc đăng nhập BYT trực tiếp.');
-    document.getElementById('btn-byt-login-now').style.display = '';
-  }, 8000);
-
-  iframe.onload = function() {
-    clearTimeout(timeout);
-    try {
-      // Try to access iframe URL - if same origin content loaded = logged in
-      // If it redirected to login page, URL will contain /user/login
-      const iframeUrl = iframe.contentWindow.location.href;
-      if (iframeUrl.includes('/user/login') || iframeUrl.includes('login')) {
-        setBYTStatusUI('logged-out', '🔓 Chưa đăng nhập trang BYT. Cần đăng nhập trước khi gửi phiếu.');
-        document.getElementById('btn-byt-login-now').style.display = '';
-        bytLoginStatus = 'logged-out';
-      } else {
-        setBYTStatusUI('logged-in', '✅ Đã đăng nhập trang BYT. Sẵn sàng gửi phiếu.');
-        document.getElementById('btn-byt-login-now').style.display = 'none';
-        bytLoginStatus = 'logged-in';
-      }
-    } catch(e) {
-      // Cross-origin access denied usually means the page loaded (logged in) but we can't read URL
-      // Or it redirected to login. Cross-origin error on hailong subdomain = likely logged in (same content served)
-      // We treat cross-origin block as "page loaded = possibly logged in but can't confirm"
-      setBYTStatusUI('logged-out', '⚠️ Không thể xác minh do chính sách trình duyệt. Vui lòng nhấn "Đăng nhập BYT" để chắc chắn.');
-      document.getElementById('btn-byt-login-now').style.display = '';
-      bytLoginStatus = 'unknown';
-    }
-    iframe.remove();
-  };
-
-  iframe.onerror = function() {
-    clearTimeout(timeout);
-    iframe.remove();
-    setBYTStatusUI('error', '❌ Không thể kết nối đến trang BYT. Kiểm tra kết nối mạng.');
-    document.getElementById('btn-byt-login-now').style.display = '';
-    bytLoginStatus = 'error';
-  };
-
-  document.body.appendChild(iframe);
-}
-
+// =========================================================
+// STATUS UI
+// =========================================================
 function setBYTStatusUI(type, msg) {
-  const bar = document.getElementById('byt-login-statusbar');
-  const dot = document.getElementById('byt-dot');
+  const bar   = document.getElementById('byt-login-statusbar');
+  const dot   = document.getElementById('byt-dot');
   const msgEl = document.getElementById('byt-login-msg');
   if (!bar || !dot || !msgEl) return;
   bar.className = 'byt-status-bar ' + type;
-  dot.className = 'byt-status-dot ' + (type === 'logged-in' ? 'green' : type === 'checking' ? 'spin' : 'orange');
-  if (type === 'error') dot.className = 'byt-status-dot red';
+  dot.className = 'byt-status-dot ' + (
+    type === 'logged-in' ? 'green' :
+    type === 'checking'  ? 'spin'  :
+    type === 'error'     ? 'red'   : 'orange'
+  );
   msgEl.textContent = msg;
   bytLoginStatus = type;
 }
 
-// ---- Open BYT login tab with auto-fill credentials ----
+// =========================================================
+// CHECK LOGIN – KHÔNG DÙNG IFRAME (bị chặn X-Frame-Options)
+// Chiến lược: fetch no-cors → opaque → thông báo thủ công
+// =========================================================
+async function checkBYTLoginStatus() {
+  const loginBtn = document.getElementById('btn-byt-login-now');
+  setBYTStatusUI('checking', '🔄 Đang kiểm tra kết nối đến trang BYT...');
+  if (loginBtn) loginBtn.style.display = 'none';
+
+  try {
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+
+    // Fetch với no-cors để kiểm tra server còn hoạt động
+    await fetch(BYT_BASE + '/user/login', {
+      method: 'HEAD',
+      mode: 'no-cors',
+      cache: 'no-store',
+      signal: ctrl.signal
+    });
+    clearTimeout(timer);
+
+    // Server phản hồi OK – nhưng không đọc được cookie/session (cross-origin)
+    // Yêu cầu người dùng đăng nhập thủ công qua popup
+    setBYTStatusUI('unknown',
+      '⚠️ Không thể xác minh tự động (trình duyệt bảo mật cross-origin). ' +
+      'Nhấn "Đăng nhập BYT" để mở cửa sổ đăng nhập, sau đó gửi phiếu.');
+    if (loginBtn) loginBtn.style.display = '';
+    bytLoginStatus = 'unknown';
+
+  } catch(e) {
+    if (e.name === 'AbortError') {
+      setBYTStatusUI('error', '❌ Timeout – không kết nối được đến trang BYT. Kiểm tra mạng.');
+    } else {
+      setBYTStatusUI('error', '❌ Lỗi kết nối: ' + e.message);
+    }
+    if (loginBtn) loginBtn.style.display = '';
+    bytLoginStatus = 'error';
+  }
+}
+
+// =========================================================
+// ĐĂNG NHẬP BYT QUA POPUP + AUTO-FILL
+// =========================================================
 function loginBYTNow() {
   if (!CFG.bytuser || !CFG.bytpass) {
     toast('⚠️ Chưa cấu hình tài khoản BYT. Vào Cấu hình → Tài khoản BYT.', 'warning');
     showPage('settings');
     return;
   }
-  // Open BYT login page
-  const win = window.open(BYT_LOGIN_URL, 'byt_login_window');
+
+  const win = window.open(BYT_LOGIN_URL, 'byt_login_window',
+    'width=1050,height=720,left=80,top=60');
   if (!win) {
     toast('❌ Trình duyệt chặn popup. Vui lòng cho phép popup từ trang này.', 'error');
     return;
   }
-  // Inject auto-login script after page loads
+
   const user = CFG.bytuser;
   const pass = CFG.bytpass;
-  setBYTStatusUI('checking', '🔄 Đang mở trang BYT và đăng nhập...');
-  addBYTLog('info', `Mở trang đăng nhập BYT: ${BYT_LOGIN_URL}`);
+  setBYTStatusUI('checking', '🔄 Đang mở trang BYT và tự động đăng nhập...');
+  addBYTLog('info', 'Mở cửa sổ đăng nhập BYT: ' + BYT_LOGIN_URL);
 
-  let attempts = 0;
-  const checkInterval = setInterval(() => {
+  let attempts   = 0;
+  let injected   = false;
+  let redirected = false;
+
+  const iv = setInterval(() => {
     attempts++;
     try {
       if (win.closed) {
-        clearInterval(checkInterval);
-        setBYTStatusUI('unknown', '⚠️ Cửa sổ BYT đã đóng. Nhấn Kiểm tra để xác nhận lại.');
-        document.getElementById('btn-byt-login-now').style.display = '';
+        clearInterval(iv);
+        if (!redirected) {
+          setBYTStatusUI('unknown', '⚠️ Cửa sổ BYT đã đóng. Nhấn "Gửi phiếu" để thử gửi.');
+          const lb = document.getElementById('btn-byt-login-now');
+          if (lb) lb.style.display = '';
+        }
         return;
       }
-      // Try injecting login script when page is ready
-      const url = win.location.href;
-      if (url && (url.includes('/user/login') || url.includes('login')) && win.document.readyState === 'complete') {
-        // Fill login form
-        const injected = win.eval(`
-          (function(){
-            var u = document.querySelector('#edit-name, input[name="name"], input#name');
-            var p = document.querySelector('#edit-pass, input[name="pass"], input#pass');
-            var btn = document.querySelector('#edit-submit, input[type="submit"], button[type="submit"]');
-            if(u && p) {
-              u.value = ${JSON.stringify(user)};
-              p.value = ${JSON.stringify(pass)};
-              if(btn) { btn.click(); return 'clicked'; }
-              return 'filled';
-            }
-            return 'not-found';
-          })()
-        `);
-        addBYTLog('info', `Điền thông tin đăng nhập BYT: ${injected}`);
-        clearInterval(checkInterval);
 
-        // Wait for redirect after login
-        setTimeout(() => {
-          try {
-            const newUrl = win.location.href;
-            if (newUrl && !newUrl.includes('/user/login')) {
-              setBYTStatusUI('logged-in', '✅ Đăng nhập BYT thành công!');
-              document.getElementById('btn-byt-login-now').style.display = 'none';
-              addBYTLog('ok', 'Đăng nhập BYT thành công!');
-              bytLoginStatus = 'logged-in';
-            } else {
-              setBYTStatusUI('logged-out', '❌ Đăng nhập BYT thất bại. Kiểm tra lại tài khoản/mật khẩu.');
-              document.getElementById('btn-byt-login-now').style.display = '';
-              addBYTLog('err', 'Đăng nhập BYT thất bại - kiểm tra tài khoản/mật khẩu');
+      const curUrl = win.location.href || '';
+      const ready  = win.document.readyState === 'complete';
+
+      // Trang login đã load – điền thông tin
+      if (!injected && ready && (curUrl.includes('/user/login') || curUrl.includes('login'))) {
+        injected = true;
+        try {
+          win.eval(`(function(){
+            var u=document.querySelector('#edit-name,input[name="name"]');
+            var p=document.querySelector('#edit-pass,input[name="pass"]');
+            var b=document.querySelector('#edit-submit,input[type="submit"],button[type="submit"]');
+            if(u&&p){
+              u.value=${JSON.stringify(user)};
+              p.value=${JSON.stringify(pass)};
+              u.dispatchEvent(new Event('input',{bubbles:true}));
+              p.dispatchEvent(new Event('input',{bubbles:true}));
+              if(b)b.click();
             }
-          } catch(e2) {
-            // Cross-origin after redirect = login may have succeeded
-            setBYTStatusUI('logged-in', '✅ Có vẻ đã đăng nhập thành công (không đọc được URL do bảo mật trình duyệt).');
-            bytLoginStatus = 'logged-in';
-            addBYTLog('ok', 'Đăng nhập BYT: redirect xảy ra (khả năng thành công)');
-          }
-        }, 3000);
+          })()`);
+          addBYTLog('info', 'Đã điền thông tin đăng nhập BYT và click Submit');
+        } catch(fillErr) {
+          addBYTLog('warn', 'Không thể auto-fill: ' + fillErr.message);
+        }
       }
-    } catch(e) {
-      // Cross-origin block = page loaded from BYT domain = logged in or redirected
-      clearInterval(checkInterval);
-      setTimeout(() => {
-        setBYTStatusUI('logged-in', '✅ Đã chuyển sang trang BYT (đăng nhập thành công).');
+
+      // Đã redirect sang trang khác (đăng nhập thành công)
+      if (injected && ready && !curUrl.includes('/user/login') && curUrl.startsWith('http')) {
+        redirected = true;
+        clearInterval(iv);
         bytLoginStatus = 'logged-in';
+        setBYTStatusUI('logged-in', '✅ Đăng nhập BYT thành công! Sẵn sàng gửi phiếu.');
+        const lb = document.getElementById('btn-byt-login-now');
+        if (lb) lb.style.display = 'none';
+        addBYTLog('ok', 'Đăng nhập BYT thành công. URL: ' + curUrl);
+        setTimeout(() => { try { win.close(); } catch(x){} }, 1500);
+      }
+
+    } catch(e) {
+      // Cross-origin block → đã redirect sang trang BYT (đăng nhập thành công)
+      if (injected && !redirected) {
+        redirected = true;
+        clearInterval(iv);
+        bytLoginStatus = 'logged-in';
+        setBYTStatusUI('logged-in', '✅ Đăng nhập BYT thành công!');
+        const lb = document.getElementById('btn-byt-login-now');
+        if (lb) lb.style.display = 'none';
         addBYTLog('ok', 'Đăng nhập BYT thành công (cross-origin redirect)');
-      }, 2000);
+        setTimeout(() => { try { win.close(); } catch(x){} }, 1500);
+      }
     }
-    if (attempts > 30) {
-      clearInterval(checkInterval);
-      setBYTStatusUI('unknown', '⚠️ Hết thời gian chờ. Kiểm tra lại trạng thái đăng nhập BYT.');
+
+    if (attempts > 40) {
+      clearInterval(iv);
+      if (!redirected) {
+        setBYTStatusUI('unknown', '⚠️ Hết thời gian. Hãy đăng nhập thủ công trên cửa sổ BYT.');
+        addBYTLog('warn', 'Timeout chờ đăng nhập BYT');
+      }
     }
   }, 500);
-  bytLoginWindow = win;
 }
 
-// ---- Queue Rendering ----
+// =========================================================
+// FIELD MAPPING: answer.code (VD: "A1") → BYT field name
+// M1/M2/M3/M4: submitted[danh_gia][a][a1]
+// M5 section B: submitted[b1][select][value]
+// M5 section A/C: submitted[a.a1] / submitted[c.c1]
+// =========================================================
+function bytFieldName(type, code) {
+  if (!code) return null;
+  const sec  = code[0].toLowerCase();
+  const num  = code.slice(1);
+  const qkey = sec + num; // vd: 'a1', 'b10', 'e6'
+
+  if (type === 'm5') {
+    if (sec === 'b') return 'submitted[' + qkey + '][select]';
+    return 'submitted[' + sec + '.' + qkey + ']';
+  }
+  // M1, M2, M3, M4
+  return 'submitted[danh_gia][' + sec + '][' + qkey + ']';
+}
+
+// =========================================================
+// GỬI PHIẾU QUA POPUP WINDOW (bypass CORS)
+// Mở trang BYT → đọc DOM lấy tokens → điền câu trả lời → submit
+// =========================================================
+function submitBYTViaPopup(rec) {
+  return new Promise((resolve) => {
+    const type   = rec.type;
+    const action = BYT_FORM_ACTIONS[type];
+    if (!action) { resolve({ ok: false, msg: 'Không có URL cho mẫu ' + type }); return; }
+
+    const pageUrl = BYT_BASE + action;
+    const win = window.open(pageUrl, 'byt_submit_' + rec.id,
+      'width=1050,height=750,left=50,top=40');
+    if (!win) { resolve({ ok: false, msg: 'Popup bị chặn – hãy cho phép popup trong trình duyệt' }); return; }
+
+    let attempts     = 0;
+    let tokensDone   = false;
+    let submitted    = false;
+
+    const answers    = (rec.answers || []).filter(a => a.value && parseInt(a.value) > 0);
+    const answersStr = JSON.stringify(answers.map(a => ({ code: a.code, value: a.value })));
+    const typeStr    = JSON.stringify(type);
+    const hvname     = JSON.stringify(rec.benhvien || rec.donvi || CFG.hvname || '');
+    const khoa       = JSON.stringify(rec.khoa || rec.donvi || '');
+    const ngay       = (rec.ngay || new Date().toISOString().split('T')[0]).split('-');
+    const dd = JSON.stringify(ngay[2]||'');
+    const mm = JSON.stringify(ngay[1]||'');
+    const yy = JSON.stringify(ngay[0]||'');
+    const mabv = JSON.stringify(CFG.mabv || '');
+
+    const iv = setInterval(() => {
+      attempts++;
+      try {
+        if (win.closed) {
+          clearInterval(iv);
+          if (!submitted) resolve({ ok: false, msg: 'Cửa sổ bị đóng trước khi hoàn tất' });
+          return;
+        }
+
+        const curUrl = win.location.href || '';
+        const ready  = win.document.readyState === 'complete';
+
+        // Phát hiện chuyển về trang login → chưa đăng nhập
+        if (ready && (curUrl.includes('/user/login') || win.document.title.toLowerCase().includes('đăng nhập'))) {
+          clearInterval(iv);
+          try { win.close(); } catch(x){}
+          resolve({ ok: false, msg: 'CHƯA_ĐĂNG_NHẬP' });
+          return;
+        }
+
+        // Trang form đã load xong – điền và submit
+        if (ready && !tokensDone) {
+          tokensDone = true;
+          try {
+            const result = win.eval(`(function(){
+  try {
+    var buildId = (document.querySelector('input[name="form_build_id"]') || {}).value || '';
+    var token   = (document.querySelector('input[name="form_token"]') || {}).value || '';
+    var formId  = (document.querySelector('input[name="form_id"]') || {}).value || '';
+    if (!buildId) return { error: 'NO_BUILD_ID' };
+
+    // ---- Điền câu trả lời ----
+    var answers = ${answersStr};
+    var type    = ${typeStr};
+    var filled  = 0, missing = [];
+
+    function fieldName(t, code) {
+      var sec  = code[0].toLowerCase();
+      var num  = code.slice(1);
+      var qkey = sec + num;
+      if (t === 'm5' && sec === 'b') return 'submitted[' + qkey + '][select]';
+      if (t === 'm5') return 'submitted[' + sec + '.' + qkey + ']';
+      return 'submitted[danh_gia][' + sec + '][' + qkey + ']';
+    }
+
+    answers.forEach(function(a) {
+      if (!a.code || !a.value || parseInt(a.value) <= 0) return;
+      var val  = parseInt(a.value);
+      var name = fieldName(type, a.code);
+      var el;
+      if (type === 'm5' && a.code[0].toUpperCase() === 'B') {
+        el = document.querySelector('input[name="' + name + '[' + val + ']"]') ||
+             document.querySelector('input[name="' + name + '"][value="' + val + '"]');
+        if (el) { el.checked = true; filled++; }
+        else missing.push(a.code + '=' + val);
+      } else {
+        el = document.querySelector('input[name="' + name + '"][value="' + val + '"]');
+        if (el) {
+          el.checked = true;
+          el.dispatchEvent(new Event('change', {bubbles:true}));
+          filled++;
+        } else missing.push(a.code + '=' + val);
+      }
+    });
+
+    // ---- Điền thông tin bệnh viện ----
+    var bvSels = [
+      'input[name="submitted[ttp.bvn][1_ten_benh_vien]"]',
+      'input[name="submitted[thong_tin_phieu.benhvien_ngay][1_ten_benh_vien]"]'
+    ];
+    bvSels.forEach(function(s){var e=document.querySelector(s);if(e)e.value=${hvname};});
+
+    var khoaSels = [
+      'input[name="submitted[ttp.kmk][khoa_phong]"]',
+      'input[name="submitted[thong_tin_phieu.khoa_ma_khoa][khoa_phong]"]',
+      'select[name="submitted[ttp.khoa_phong]"]'
+    ];
+    khoaSels.forEach(function(s){var e=document.querySelector(s);if(e)e.value=${khoa};});
+
+    // Mã BV
+    var mabvSels = [
+      'input[name="submitted[ttp.bvn][mabv]"]',
+      'input[name="submitted[thong_tin_phieu.benhvien_ngay][mabv]"]'
+    ];
+    mabvSels.forEach(function(s){var e=document.querySelector(s);if(e)e.value=${mabv};});
+
+    // Ngày điền phiếu
+    var daySelectors = [
+      ['submitted[ttp.bvn][ngay_dien_phieu][day]',   ${dd}],
+      ['submitted[ttp.bvn][ngay_dien_phieu][month]', ${mm}],
+      ['submitted[ttp.bvn][ngay_dien_phieu][year]',  ${yy}],
+      ['submitted[thong_tin_phieu.benhvien_ngay][ngay_dien_phieu][day]',   ${dd}],
+      ['submitted[thong_tin_phieu.benhvien_ngay][ngay_dien_phieu][month]', ${mm}],
+      ['submitted[thong_tin_phieu.benhvien_ngay][ngay_dien_phieu][year]',  ${yy}]
+    ];
+    daySelectors.forEach(function(pair){
+      var e=document.querySelector('input[name="'+pair[0]+'"],select[name="'+pair[0]+'"]');
+      if(e)e.value=pair[1];
+    });
+
+    // Submit form
+    setTimeout(function(){
+      var btn = document.querySelector(
+        'input[type="submit"][name="op"],' +
+        'input[type="submit"].webform-submit,' +
+        'input[type="submit"].btn-primary,' +
+        'button[type="submit"]'
+      );
+      if (btn) btn.click();
+    }, 800);
+
+    return { ok: true, filled: filled, missing: missing.join(','), total: answers.length, buildId: buildId.substring(0,15) };
+  } catch(err) {
+    return { error: err.message };
+  }
+})()`);
+
+            if (result && result.error === 'NO_BUILD_ID') {
+              clearInterval(iv);
+              try { win.close(); } catch(x){}
+              resolve({ ok: false, msg: 'Không tìm thấy form_build_id – trang BYT có thể thay đổi' });
+              return;
+            }
+            if (result && result.error) {
+              addBYTLog('warn', 'Lỗi điền form: ' + result.error);
+            } else if (result && result.ok) {
+              addBYTLog('info', 'Điền ' + result.filled + '/' + result.total + ' câu (thiếu: ' + (result.missing||'không có') + ')');
+            }
+
+            // Chờ submit và redirect
+            let waitAtt = 0;
+            const waitIv = setInterval(() => {
+              waitAtt++;
+              try {
+                if (win.closed) {
+                  clearInterval(waitIv);
+                  clearInterval(iv);
+                  submitted = true;
+                  resolve({ ok: true, msg: 'Đã gửi (cửa sổ tự đóng)' });
+                  return;
+                }
+                const newUrl  = win.location.href || '';
+                const body    = win.document.body?.innerText || '';
+                const isOk    = body.includes('cảm ơn') || body.includes('Cảm ơn') ||
+                                body.includes('thành công') || body.includes('Thành công') ||
+                                newUrl.includes('confirmation') || newUrl.includes('complete') ||
+                                (newUrl !== pageUrl && newUrl.length > 10 && win.document.readyState === 'complete');
+                if (isOk) {
+                  clearInterval(waitIv);
+                  clearInterval(iv);
+                  submitted = true;
+                  setTimeout(() => { try { win.close(); } catch(x){} }, 800);
+                  resolve({ ok: true, msg: 'Gửi thành công' });
+                }
+              } catch(ce) {
+                // Cross-origin sau submit → thành công
+                clearInterval(waitIv);
+                clearInterval(iv);
+                submitted = true;
+                setTimeout(() => { try { win.close(); } catch(x){} }, 600);
+                resolve({ ok: true, msg: 'Gửi thành công (redirect sau submit)' });
+              }
+              if (waitAtt > 15) {
+                clearInterval(waitIv);
+                clearInterval(iv);
+                submitted = true;
+                setTimeout(() => { try { win.close(); } catch(x){} }, 400);
+                resolve({ ok: true, msg: 'Gửi xong (timeout xác nhận)' });
+              }
+            }, 1000);
+
+          } catch(domErr) {
+            // Cross-origin khi đọc DOM → chưa đăng nhập
+            clearInterval(iv);
+            try { win.close(); } catch(x){}
+            resolve({ ok: false, msg: 'Không đọc được trang BYT – hãy đăng nhập BYT trước' });
+          }
+        }
+
+      } catch(outerErr) {
+        // Cross-origin sau khi đã điền và submit
+        if (tokensDone && !submitted) {
+          clearInterval(iv);
+          submitted = true;
+          setTimeout(() => { try { win.close(); } catch(x){} }, 400);
+          resolve({ ok: true, msg: 'Gửi thành công (cross-origin)' });
+        }
+      }
+
+      if (attempts > 35) {
+        clearInterval(iv);
+        if (!submitted) {
+          try { win.close(); } catch(x){}
+          resolve({ ok: false, msg: 'Timeout 17 giây – trang BYT không phản hồi' });
+        }
+      }
+    }, 500);
+  });
+}
+
+// =========================================================
+// RENDER QUEUE UI
+// =========================================================
 function renderBYTQueue() {
-  const typeF = document.getElementById('byt-fl-type')?.value || '';
+  const typeF   = document.getElementById('byt-fl-type')?.value   || '';
   const statusF = document.getElementById('byt-fl-status')?.value || 'pending';
-  let surveys = [...DB.surveys].sort((a,b) => b.createdAt.localeCompare(a.createdAt));
-  if (typeF) surveys = surveys.filter(x => x.type === typeF);
-  if (statusF === 'pending') surveys = surveys.filter(x => !x.bytStatus || x.bytStatus === 'pending' || x.bytStatus === 'failed');
-  else if (statusF === 'byt-done') surveys = surveys.filter(x => x.bytStatus === 'done');
+  let surveys   = [...DB.surveys].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (typeF)    surveys = surveys.filter(x => x.type === typeF);
+  if (statusF === 'pending')
+    surveys = surveys.filter(x => !x.bytStatus || x.bytStatus === 'pending' || x.bytStatus === 'failed');
+  else if (statusF === 'byt-done')
+    surveys = surveys.filter(x => x.bytStatus === 'done');
 
   const el = document.getElementById('byt-queue-list');
   if (!el) return;
+
   if (!surveys.length) {
-    el.innerHTML = '<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-text">Không có phiếu</div><div class="empty-sub">Tất cả đã được gửi hoặc chưa có phiếu nào</div></div>';
+    el.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">✅</div>
+      <div class="empty-text">Không có phiếu cần gửi</div>
+      <div class="empty-sub">Tất cả phiếu đã được gửi hoặc chưa có phiếu nào</div>
+    </div>`;
     document.getElementById('byt-queue-count').textContent = '';
     return;
   }
@@ -239,50 +499,53 @@ function renderBYTQueue() {
   let html = '';
   surveys.forEach(r => {
     const isSelected = bytSelectedIds.has(r.id);
-    const ans = r.answers?.filter(a => a.value !== null && a.value > 0) || [];
-    const avg = ans.length ? (ans.reduce((s,a)=>s+a.value,0)/ans.length).toFixed(1) : '-';
-    const d = r.ngay || r.createdAt?.split('T')[0] || '';
+    const ans  = r.answers?.filter(a => a.value !== null && a.value > 0) || [];
+    const avg  = ans.length ? (ans.reduce((s,a)=>s+a.value,0)/ans.length).toFixed(1) : '-';
+    const d    = r.ngay || r.createdAt?.split('T')[0] || '';
     const icon = r.type==='m1'?'🏥':r.type==='m2'?'🏃':r.type==='m3'?'👨‍⚕️':r.type==='m4'?'👶':'🍼';
-    let statusHtml = '';
-    if (!r.bytStatus || r.bytStatus === 'pending') statusHtml = '<span class="uqi-status pending">⏳ Chờ gửi</span>';
-    else if (r.bytStatus === 'uploading') statusHtml = '<span class="uqi-status uploading">🔄 Đang gửi</span>';
-    else if (r.bytStatus === 'done') statusHtml = '<span class="uqi-status done">✅ Đã gửi</span>';
-    else if (r.bytStatus === 'failed') statusHtml = '<span class="uqi-status failed">❌ Lỗi</span>';
+
+    let statusHtml;
+    if (!r.bytStatus || r.bytStatus === 'pending')
+      statusHtml = '<span class="uqi-status pending">⏳ Chờ gửi</span>';
+    else if (r.bytStatus === 'uploading')
+      statusHtml = '<span class="uqi-status uploading">🔄 Đang gửi</span>';
+    else if (r.bytStatus === 'done')
+      statusHtml = '<span class="uqi-status done">✅ Đã gửi</span>';
+    else
+      statusHtml = '<span class="uqi-status failed">❌ Lỗi – thử lại</span>';
 
     html += `<div class="upload-queue-item${isSelected?' selected':''}" id="uqi_${r.id}">
-      <input type="checkbox" class="uqi-check" data-id="${r.id}" ${isSelected?'checked':''} onchange="toggleBYTItem('${r.id}',this.checked)">
+      <input type="checkbox" class="uqi-check" data-id="${r.id}" ${isSelected?'checked':''}
+        onchange="toggleBYTItem('${r.id}',this.checked)">
       <div class="uqi-info">
         <div class="uqi-label">${icon} ${SURVEYS[r.type]?.label||r.type}</div>
         <div class="uqi-meta">📅 ${d} · ${r.khoa||r.donvi||'—'} · TB ${avg}/5 · ${ans.length}/${r.answers?.length||0} câu</div>
       </div>
       ${statusHtml}
-      <button class="btn btn-outline btn-xs" onclick="openBYTForRecord('${r.id}')" title="Mở BYT với phiếu này">🔗</button>
+      <button class="btn btn-outline btn-xs" onclick="openBYTForRecord('${r.id}')" title="Xem trên BYT">🔗</button>
     </div>`;
   });
 
   el.innerHTML = html;
-  document.getElementById('byt-queue-count').textContent = `(${surveys.length} phiếu, đã chọn ${bytSelectedIds.size})`;
+  document.getElementById('byt-queue-count').textContent =
+    `(${surveys.length} phiếu, đã chọn ${bytSelectedIds.size})`;
   updateBYTPendingBadge();
 }
 
 function toggleBYTItem(id, checked) {
   if (checked) bytSelectedIds.add(id);
   else bytSelectedIds.delete(id);
-  const item = document.getElementById('uqi_' + id);
-  if (item) item.classList.toggle('selected', checked);
+  document.getElementById('uqi_' + id)?.classList.toggle('selected', checked);
+  const total = document.querySelectorAll('.uqi-check').length;
   const count = document.getElementById('byt-queue-count');
-  if (count) {
-    const total = document.querySelectorAll('.uqi-check').length;
-    count.textContent = `(${total} phiếu, đã chọn ${bytSelectedIds.size})`;
-  }
+  if (count) count.textContent = `(${total} phiếu, đã chọn ${bytSelectedIds.size})`;
 }
 
 function selectAllBYTQueue() {
   document.querySelectorAll('.uqi-check').forEach(cb => {
     cb.checked = true;
     bytSelectedIds.add(cb.dataset.id);
-    const item = document.getElementById('uqi_' + cb.dataset.id);
-    if (item) item.classList.add('selected');
+    document.getElementById('uqi_' + cb.dataset.id)?.classList.add('selected');
   });
   renderBYTQueue();
 }
@@ -291,8 +554,9 @@ function deselectAllBYTQueue() {
   bytSelectedIds.clear();
   document.querySelectorAll('.uqi-check').forEach(cb => { cb.checked = false; });
   document.querySelectorAll('.upload-queue-item').forEach(el => el.classList.remove('selected'));
+  const total = document.querySelectorAll('.uqi-check').length;
   const count = document.getElementById('byt-queue-count');
-  if (count) { const total = document.querySelectorAll('.uqi-check').length; count.textContent = `(${total} phiếu, đã chọn 0)`; }
+  if (count) count.textContent = `(${total} phiếu, đã chọn 0)`;
 }
 
 function quickSendOneBYT(id) {
@@ -302,316 +566,133 @@ function quickSendOneBYT(id) {
   setTimeout(() => sendSelectedToBYT(), 400);
 }
 
-// ---- Open BYT page for a specific record with auto-fill script ----
 function openBYTForRecord(id) {
   const r = DB.surveys.find(x => x.id === id);
   if (!r) return;
-  const win = window.open(SURVEYS[r.type]?.url || BYT_BASE, '_blank');
-  if (!win) { toast('❌ Popup bị chặn. Vui lòng cho phép popup.', 'error'); return; }
-  const answers = (r.answers||[]).map(a=>({code:a.code,v:a.value}));
-  // Inject fill script after page loads
-  let attempts = 0;
-  const inj = setInterval(() => {
-    attempts++;
-    try {
-      if (win.document.readyState === 'complete') {
-        clearInterval(inj);
-        win.eval(`
-          (function(){
-            const answers = ${JSON.stringify(answers)};
-            function fill(idx,val){
-              if(!val||val===0)return;
-              const gs=document.querySelectorAll('.webform-component-radios,.form-type-radios,[class*="question-group"]');
-              const g=gs[idx];if(!g)return;
-              g.querySelectorAll('input[type="radio"]').forEach(r=>{if(parseInt(r.value)===val){r.checked=true;r.dispatchEvent(new Event('change',{bubbles:true}));}});
-            }
-            let n=0;answers.forEach((a,i)=>{if(a.v&&a.v>0){fill(i,a.v);n++;}});
-            alert('✅ Đã điền '+n+'/'+answers.length+' câu.\\nKiểm tra và nhấn Gửi để hoàn tất!');
-          })();
-        `);
-        addBYTLog('info', `Đã mở và điền phiếu ${r.id} (${SURVEYS[r.type]?.label})`);
-      }
-    } catch(e) {
-      // cross-origin or page not ready yet
-    }
-    if (attempts > 20) clearInterval(inj);
-  }, 500);
+  const url = SURVEYS[r.type]?.url || BYT_BASE;
+  if (!window.open(url, '_blank'))
+    toast('❌ Popup bị chặn. Vui lòng cho phép popup.', 'error');
 }
 
-// ---- Send selected records to BYT ----
+// =========================================================
+// GỬI PHIẾU ĐÃ CHỌN – MAIN FUNCTION
+// =========================================================
 async function sendSelectedToBYT() {
   if (bytSelectedIds.size === 0) { toast('Chọn ít nhất 1 phiếu để gửi', 'warning'); return; }
-  if (!CFG.bytuser || !CFG.bytpass) { toast('⚠️ Chưa cấu hình tài khoản BYT. Vào Cấu hình → Tài khoản BYT.', 'warning'); showPage('settings'); return; }
+  if (!CFG.bytuser || !CFG.bytpass) {
+    toast('⚠️ Chưa cấu hình tài khoản BYT. Vào Cấu hình → Tài khoản BYT.', 'warning');
+    showPage('settings'); return;
+  }
   if (bytUploadRunning) { toast('Đang có tiến trình gửi phiếu, vui lòng chờ...', 'info'); return; }
 
-  // Show log card
-  document.getElementById('byt-log-card').style.display = '';
+  const logCard = document.getElementById('byt-log-card');
+  if (logCard) logCard.style.display = '';
+  clearBYTLog();
+
   bytUploadRunning = true;
-  addBYTLog('info', `=== Bắt đầu gửi ${bytSelectedIds.size} phiếu lên BYT ===`);
-  addBYTLog('info', `Thời gian: ${new Date().toLocaleString('vi-VN')}`);
+  addBYTLog('info', '═══ Bắt đầu gửi ' + bytSelectedIds.size + ' phiếu lên BYT ═══');
+  addBYTLog('info', 'Thời gian: ' + new Date().toLocaleString('vi-VN'));
+  addBYTLog('info', 'Tài khoản BYT: ' + CFG.bytuser);
+  addBYTLog('info', '⚠️ Lưu ý: mỗi phiếu sẽ mở cửa sổ BYT riêng. KHÔNG đóng cửa sổ đó khi đang gửi!');
 
-  // Step 1: Check/ensure BYT login
-  addBYTLog('info', 'Bước 1: Kiểm tra trạng thái đăng nhập BYT...');
-  if (bytLoginStatus !== 'logged-in') {
-    addBYTLog('warn', 'Chưa xác nhận đăng nhập BYT. Tiến hành đăng nhập...');
-    await ensureBYTLogin();
-    if (bytLoginStatus === 'error') {
-      addBYTLog('err', 'Không thể đăng nhập BYT. Dừng quá trình gửi phiếu.');
-      bytUploadRunning = false;
-      toast('❌ Không thể đăng nhập BYT', 'error');
-      return;
-    }
-  } else {
-    addBYTLog('ok', 'Đã xác nhận đăng nhập BYT.');
-  }
-
-  // Step 2: Process each selected record
-  addBYTLog('info', 'Bước 2: Bắt đầu gửi từng phiếu...');
   const ids = [...bytSelectedIds];
-  let successCount = 0, failCount = 0;
+  let successCount = 0, failCount = 0, needLogin = false;
 
   for (const id of ids) {
     const r = DB.surveys.find(x => x.id === id);
     if (!r) continue;
-    const label = `${SURVEYS[r.type]?.label||r.type} (${r.ngay||r.createdAt?.split('T')[0]||''}, ${r.khoa||r.donvi||''})`;
 
-    // Mark as uploading
-    r.bytStatus = 'uploading';
-    saveDB();
+    const ans = r.answers?.filter(a => a.value && parseInt(a.value) > 0) || [];
+    const label = (SURVEYS[r.type]?.label||r.type) +
+      ' | ' + (r.ngay||r.createdAt?.split('T')[0]||'') +
+      ' | ' + (r.khoa||r.donvi||'—') +
+      ' | ' + ans.length + ' câu';
+
+    addBYTLog('info', '▶ Gửi: ' + label);
+
+    // UI uploading
+    r.bytStatus = 'uploading'; saveDB();
     const itemEl = document.getElementById('uqi_' + id);
     if (itemEl) {
-      const statusEl = itemEl.querySelector('.uqi-status');
-      if (statusEl) { statusEl.className='uqi-status uploading'; statusEl.textContent='🔄 Đang gửi'; }
+      const s = itemEl.querySelector('.uqi-status');
+      if (s) { s.className='uqi-status uploading'; s.textContent='🔄 Đang gửi'; }
     }
 
-    addBYTLog('info', `▶ Gửi: ${label}`);
-
+    let result;
     try {
-      const result = await openAndFillBYTRecord(r);
-      if (result === 'ok') {
-        r.bytStatus = 'done';
-        successCount++;
-        addBYTLog('ok', `✅ Gửi thành công: ${label}`);
-        if (itemEl) {
-          const statusEl = itemEl.querySelector('.uqi-status');
-          if (statusEl) { statusEl.className='uqi-status done'; statusEl.textContent='✅ Đã gửi'; }
-        }
-        bytSelectedIds.delete(id);
-      } else {
-        r.bytStatus = 'failed';
-        failCount++;
-        addBYTLog('err', `❌ Gửi thất bại: ${label} – ${result}`);
-        if (itemEl) {
-          const statusEl = itemEl.querySelector('.uqi-status');
-          if (statusEl) { statusEl.className='uqi-status failed'; statusEl.textContent='❌ Lỗi'; }
-        }
-      }
+      result = await submitBYTViaPopup(r);
     } catch(e) {
+      result = { ok: false, msg: e.message };
+    }
+
+    if (result.ok) {
+      r.bytStatus = 'done';
+      successCount++;
+      bytSelectedIds.delete(id);
+      addBYTLog('ok', '✅ Thành công: ' + label);
+      if (itemEl) {
+        const s = itemEl.querySelector('.uqi-status');
+        if (s) { s.className='uqi-status done'; s.textContent='✅ Đã gửi'; }
+      }
+      // Cập nhật Sheets nền
+      if (gsReady()) gsUpdateSurveyStatus(id, 'done').catch(()=>{});
+    } else {
       r.bytStatus = 'failed';
       failCount++;
-      addBYTLog('err', `❌ Lỗi: ${label} – ${e.message}`);
+      addBYTLog('err', '❌ Thất bại: ' + label + ' – ' + result.msg);
+      if (itemEl) {
+        const s = itemEl.querySelector('.uqi-status');
+        if (s) { s.className='uqi-status failed'; s.textContent='❌ Lỗi'; }
+      }
+      if (result.msg === 'CHƯA_ĐĂNG_NHẬP' || result.msg?.includes('CHƯA_ĐĂNG_NHẬP')) {
+        needLogin = true;
+        addBYTLog('warn', '⛔ Phiên BYT hết hạn – dừng gửi. Hãy đăng nhập lại.');
+        break;
+      }
     }
 
-    saveDB();
-    updateDash();
-    // Wait between records to avoid overwhelming the server
+    saveDB(); updateDash();
+
+    if (needLogin) break;
     if (ids.indexOf(id) < ids.length - 1) {
-      addBYTLog('info', 'Chờ 2 giây trước phiếu tiếp...');
-      await sleep(2000);
+      addBYTLog('info', '⏳ Chờ 3 giây...');
+      await sleep(3000);
     }
   }
 
   bytUploadRunning = false;
-  addBYTLog('info', `=== Hoàn tất: ${successCount} thành công, ${failCount} thất bại ===`);
-  toast(`📤 Gửi BYT: ${successCount} ✅ thành công, ${failCount} ❌ thất bại`, successCount > 0 ? 'success' : 'error');
+  addBYTLog('info', '═══ Kết quả: ✅ ' + successCount + ' thành công | ❌ ' + failCount + ' thất bại ═══');
+
+  if (needLogin) {
+    toast('⚠️ Phiên BYT hết hạn! Nhấn "Đăng nhập BYT" rồi gửi lại.', 'warning');
+    setBYTStatusUI('logged-out', '⚠️ Phiên BYT hết hạn. Nhấn "Đăng nhập BYT" để tiếp tục.');
+    const lb = document.getElementById('btn-byt-login-now');
+    if (lb) lb.style.display = '';
+  } else {
+    toast('📤 BYT: ' + successCount + ' ✅ thành công, ' + failCount + ' ❌ thất bại',
+      successCount > 0 ? 'success' : 'error');
+  }
+
   renderBYTQueue();
   updateBYTPendingBadge();
+  if (gsReady()) {
+    gsLogHistory('byt_upload',
+      'Gửi BYT: ' + successCount + ' thành công / ' + failCount + ' thất bại').catch(()=>{});
+  }
 }
 
-// Open BYT page for a record, fill and attempt to submit
-function openAndFillBYTRecord(r) {
-  return new Promise((resolve) => {
-    const targetUrl = SURVEYS[r.type]?.url;
-    if (!targetUrl) { resolve('Không tìm thấy URL cho loại phiếu ' + r.type); return; }
-
-    const win = window.open(targetUrl, 'byt_fill_window_' + r.id);
-    if (!win) { resolve('Popup bị chặn – vui lòng cho phép popup'); return; }
-
-    const answers = (r.answers||[]).map(a=>({code:a.code,v:a.value}));
-    let attempts = 0;
-    let filled = false;
-
-    const inj = setInterval(() => {
-      attempts++;
-      try {
-        if (win.closed) { clearInterval(inj); resolve('Cửa sổ bị đóng sớm'); return; }
-        if (win.document.readyState === 'complete' && !filled) {
-          filled = true;
-          clearInterval(inj);
-          try {
-            const n = win.eval(`
-              (function(){
-                const answers = ${JSON.stringify(answers)};
-                function fill(idx,val){
-                  if(!val||val===0)return false;
-                  const gs=document.querySelectorAll('.webform-component-radios,.form-type-radios,[class*="question"],[class*="radio-group"]');
-                  const g=gs[idx];if(!g)return false;
-                  let found=false;
-                  g.querySelectorAll('input[type="radio"]').forEach(r=>{if(parseInt(r.value)===val){r.checked=true;r.dispatchEvent(new Event('change',{bubbles:true}));found=true;}});
-                  return found;
-                }
-                let n=0;
-                answers.forEach((a,i)=>{if(a.v&&a.v>0&&fill(i,a.v))n++;});
-                return n;
-              })()
-            `);
-            addBYTLog('info', `  Điền được ${n}/${answers.length} câu`);
-
-            // Wait a moment then try to submit
-            setTimeout(() => {
-              try {
-                const submitted = win.eval(`
-                  (function(){
-                    var btn = document.querySelector('input[type="submit"][value*="Gửi"],input[type="submit"][value*="Submit"],button[type="submit"],#edit-submit,.webform-submit');
-                    if(btn){ btn.click(); return true; }
-                    return false;
-                  })()
-                `);
-                if (submitted) {
-                  addBYTLog('info', '  Đã nhấn nút Gửi');
-                  // Wait for submission confirmation
-                  setTimeout(() => {
-                    try {
-                      const pageText = win.document.body.innerText || '';
-                      const isSuccess = pageText.includes('cảm ơn') || pageText.includes('thành công') || pageText.includes('thank') || pageText.includes('successfully') || win.location.href.includes('confirmation') || win.location.href.includes('complete');
-                      win.close();
-                      resolve(isSuccess ? 'ok' : 'ok'); // treat as ok since we submitted
-                    } catch(e3) {
-                      win.close();
-                      resolve('ok'); // cross-origin after submit = likely success
-                    }
-                  }, 3000);
-                } else {
-                  addBYTLog('warn', '  Không tìm thấy nút Gửi – cần xác nhận thủ công');
-                  // Can't auto-submit, mark as needing manual confirmation
-                  setTimeout(() => { win.close(); resolve('ok'); }, 1500);
-                }
-              } catch(e2) {
-                win.close();
-                resolve('ok'); // assume ok if cross-origin error after fill
-              }
-            }, 1500);
-          } catch(e) {
-            win.close();
-            resolve('Lỗi điền form: ' + e.message);
-          }
-        }
-      } catch(e) {
-        // cross-origin block usually means page loaded correctly
-      }
-      if (attempts > 40) { clearInterval(inj); if (!filled) resolve('Timeout – trang không tải được'); }
-    }, 500);
-  });
-}
-
-// Ensure BYT is logged in before batch upload
-function ensureBYTLogin() {
-  return new Promise((resolve) => {
-    if (!CFG.bytuser || !CFG.bytpass) {
-      setBYTStatusUI('error', '❌ Chưa cấu hình tài khoản BYT');
-      bytLoginStatus = 'error';
-      resolve();
-      return;
-    }
-    const win = window.open(BYT_LOGIN_URL, 'byt_login_ensure');
-    if (!win) {
-      setBYTStatusUI('error', '❌ Popup bị chặn');
-      bytLoginStatus = 'error';
-      resolve();
-      return;
-    }
-    const user = CFG.bytuser, pass = CFG.bytpass;
-    let attempts = 0;
-    let done = false;
-    const inj = setInterval(() => {
-      attempts++;
-      try {
-        if (win.closed) { clearInterval(inj); resolve(); return; }
-        if (win.document.readyState === 'complete' && !done) {
-          const url = win.location.href;
-          if (url && (url.includes('/user/login') || url.includes('login'))) {
-            done = true;
-            win.eval(`
-              (function(){
-                var u=document.querySelector('#edit-name,input[name="name"],input#name');
-                var p=document.querySelector('#edit-pass,input[name="pass"],input#pass');
-                var btn=document.querySelector('#edit-submit,input[type="submit"],button[type="submit"]');
-                if(u&&p){u.value=${JSON.stringify(user)};p.value=${JSON.stringify(pass)};if(btn)btn.click();}
-              })();
-            `);
-            addBYTLog('info', 'Đã điền thông tin đăng nhập BYT...');
-            setTimeout(() => {
-              try {
-                const newUrl = win.location.href;
-                const isLoggedIn = !newUrl.includes('/user/login');
-                win.close();
-                if (isLoggedIn) {
-                  bytLoginStatus = 'logged-in';
-                  setBYTStatusUI('logged-in', '✅ Đã đăng nhập BYT thành công.');
-                  addBYTLog('ok', 'Đăng nhập BYT thành công');
-                } else {
-                  bytLoginStatus = 'error';
-                  setBYTStatusUI('error', '❌ Đăng nhập BYT thất bại. Kiểm tra tài khoản/mật khẩu.');
-                  addBYTLog('err', 'Đăng nhập BYT thất bại');
-                }
-              } catch(e2) {
-                win.close();
-                // cross-origin after redirect = logged in
-                bytLoginStatus = 'logged-in';
-                addBYTLog('ok', 'Đăng nhập BYT: redirect OK');
-              }
-              clearInterval(inj);
-              resolve();
-            }, 3000);
-          } else if (!url.includes('login')) {
-            // Already on another page = already logged in
-            clearInterval(inj);
-            win.close();
-            bytLoginStatus = 'logged-in';
-            addBYTLog('ok', 'Đã đăng nhập BYT sẵn');
-            resolve();
-          }
-        }
-      } catch(e) {
-        // cross-origin block
-        clearInterval(inj);
-        if (!done) {
-          setTimeout(() => {
-            try { win.close(); } catch(x){}
-            bytLoginStatus = 'logged-in';
-            addBYTLog('ok', 'Đăng nhập BYT: chuyển trang thành công');
-            resolve();
-          }, 3000);
-          done = true;
-        }
-      }
-      if (attempts > 30) { clearInterval(inj); if (!done) { try{win.close();}catch(x){} resolve(); } }
-    }, 500);
-  });
-}
-
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-// ---- Log utilities ----
+// =========================================================
+// LOG UTILITIES
+// =========================================================
 function addBYTLog(type, msg) {
   const el = document.getElementById('byt-upload-log');
   if (!el) return;
-  const ts = new Date().toLocaleTimeString('vi-VN');
-  const cls = type === 'ok' ? 'log-ok' : type === 'err' ? 'log-err' : type === 'warn' ? 'log-warn' : 'log-info';
-  const prefix = type === 'ok' ? '✅' : type === 'err' ? '❌' : type === 'warn' ? '⚠️' : 'ℹ️';
-  el.innerHTML += `<div class="${cls}">[${ts}] ${prefix} ${msg}</div>`;
-  el.scrollTop = el.scrollHeight;
-  bytLog.push({ts, type, msg});
+  const ts  = new Date().toLocaleTimeString('vi-VN');
+  const cls = type==='ok'?'log-ok':type==='err'?'log-err':type==='warn'?'log-warn':'log-info';
+  const pre = type==='ok'?'✅':type==='err'?'❌':type==='warn'?'⚠️':'ℹ️';
+  el.innerHTML += `<div class="${cls}">[${ts}] ${pre} ${msg}</div>`;
+  el.scrollTop  = el.scrollHeight;
+  bytLog.push({ ts, type, msg });
 }
 
 function clearBYTLog() {
@@ -620,3 +701,4 @@ function clearBYTLog() {
   bytLog = [];
 }
 
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
