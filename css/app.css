@@ -889,3 +889,268 @@ table.data-table tbody td{padding:10px 14px;color:var(--text2);font-size:12.5px;
 .req-item.req-done {
   opacity: .72;
 }
+
+/* ==============================================
+   LOGIN PANEL – Nút hỗ trợ tài khoản
+   ============================================== */
+.lp-req-btn {
+  background: rgba(255,255,255,.1) !important;
+  color: #fff !important;
+  border: 1.5px solid rgba(255,255,255,.22) !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 11px 14px !important;
+  margin-top: 0 !important;
+  text-align: left !important;
+  transition: background .18s, border-color .18s !important;
+  border-radius: 12px !important;
+}
+.lp-req-btn:hover {
+  background: rgba(255,255,255,.18) !important;
+  border-color: rgba(255,255,255,.4) !important;
+}
+.lp-req-btn-orange {
+  background: rgba(230,81,0,.22) !important;
+  border-color: rgba(255,183,77,.4) !important;
+}
+.lp-req-btn-orange:hover {
+  background: rgba(230,81,0,.35) !important;
+  border-color: rgba(255,183,77,.7) !important;
+}
+
+/* ==============================================
+   LOGIN PANEL HEADER
+   ============================================== */
+.lp-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  margin-bottom: 14px;
+}
+.lp-panel-header-blue {
+  background: rgba(13,71,161,.35);
+  border: 1.5px solid rgba(66,165,245,.35);
+}
+.lp-panel-header-orange {
+  background: rgba(191,54,12,.3);
+  border: 1.5px solid rgba(255,152,0,.35);
+}
+.lp-panel-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.25;
+}
+.lp-panel-sub {
+  font-size: 11px;
+  color: rgba(255,255,255,.6);
+  margin-top: 2px;
+}
+.lp-back-btn {
+  background: rgba(255,255,255,.12);
+  border: 1px solid rgba(255,255,255,.2);
+  color: rgba(255,255,255,.85);
+  border-radius: 8px;
+  padding: 6px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--font);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background .15s;
+}
+.lp-back-btn:hover { background: rgba(255,255,255,.22); }
+.lp-back-btn-orange {
+  background: rgba(255,152,0,.2);
+  border-color: rgba(255,152,0,.35);
+}
+
+/* ==============================================
+   STEP INDICATOR (in login box)
+   ============================================== */
+.lp-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.lp-step {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,.35);
+  padding: 4px 8px;
+  border-radius: 20px;
+  transition: all .2s;
+}
+.lp-step-active {
+  color: #90CAF9;
+  background: rgba(13,71,161,.4);
+}
+.lp-step-orange.lp-step-active {
+  color: #FFCC80;
+  background: rgba(191,54,12,.35);
+}
+.lp-step-done {
+  color: #A5D6A7;
+  background: rgba(46,125,50,.25);
+}
+.lp-step-num {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.15);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700;
+  flex-shrink: 0;
+}
+.lp-step-active .lp-step-num {
+  background: #1565C0;
+  color: #fff;
+}
+.lp-step-num-orange { background: #E65100 !important; }
+.lp-step-done .lp-step-num { background: #2E7D32; color: #fff; }
+.lp-step-sep {
+  color: rgba(255,255,255,.2);
+  font-size: 14px;
+}
+
+/* ==============================================
+   FORM FIELDS IN LOGIN PANEL
+   ============================================== */
+.lp-field {
+  margin-bottom: 13px;
+}
+.lp-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255,255,255,.8);
+  margin-bottom: 5px;
+}
+.lp-req { color: #FF5252; }
+.lp-hint {
+  font-size: 10.5px;
+  color: rgba(255,255,255,.45);
+  margin-top: 3px;
+  line-height: 1.5;
+}
+.lp-input {
+  background: rgba(255,255,255,.1) !important;
+  border-color: rgba(255,255,255,.2) !important;
+  color: #fff !important;
+}
+.lp-input::placeholder { color: rgba(255,255,255,.35) !important; }
+.lp-input:focus {
+  background: rgba(255,255,255,.15) !important;
+  border-color: rgba(255,255,255,.5) !important;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.1);
+}
+
+/* ==============================================
+   RADIO LABELS IN LOGIN PANEL
+   ============================================== */
+.lp-radio-lbl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: rgba(255,255,255,.75);
+  padding: 7px 11px;
+  border: 1.5px solid rgba(255,255,255,.15);
+  border-radius: 8px;
+  flex: 1;
+  transition: border-color .15s, background .15s;
+}
+.lp-radio-lbl:hover { border-color: rgba(255,255,255,.35); background: rgba(255,255,255,.07); }
+.lp-radio-lbl input { accent-color: #90CAF9; }
+
+/* ==============================================
+   PREVIEW BOX
+   ============================================== */
+.lp-preview-box {
+  border-radius: 10px;
+  padding: 14px;
+  font-size: 13px;
+  line-height: 1.85;
+  margin-bottom: 12px;
+  color: #fff;
+}
+.lp-preview-blue {
+  background: rgba(13,71,161,.3);
+  border: 1.5px solid rgba(66,165,245,.35);
+}
+.lp-preview-orange {
+  background: rgba(191,54,12,.28);
+  border: 1.5px solid rgba(255,152,0,.35);
+}
+.lp-preview-box .lp-pr-label { color: rgba(255,255,255,.5); font-size: 11.5px; }
+.lp-preview-box code {
+  background: rgba(255,255,255,.15);
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 12px;
+  color: #90CAF9;
+}
+.lp-warn-note {
+  background: rgba(255,152,0,.18);
+  border: 1px solid rgba(255,152,0,.3);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 11.5px;
+  color: #FFCC80;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+/* ==============================================
+   DONE BOX
+   ============================================== */
+.lp-done-box {
+  border-radius: 9px;
+  padding: 12px 16px;
+  font-size: 12px;
+  line-height: 1.8;
+  text-align: left;
+}
+.lp-done-box-blue {
+  background: rgba(13,71,161,.3);
+  border: 1px solid rgba(66,165,245,.3);
+  color: #BBDEFB;
+}
+.lp-done-box-orange {
+  background: rgba(191,54,12,.28);
+  border: 1px solid rgba(255,152,0,.3);
+  color: #FFE0B2;
+}
+
+/* ==============================================
+   ACTION BUTTONS IN PANEL
+   ============================================== */
+.lp-btn-orange {
+  background: #E65100 !important;
+  color: #fff !important;
+  border: none !important;
+}
+.lp-btn-orange:hover { background: #BF360C !important; }
+.lp-btn-back {
+  background: rgba(255,255,255,.1) !important;
+  color: rgba(255,255,255,.7) !important;
+  border: 1px solid rgba(255,255,255,.15) !important;
+}
+.lp-btn-back:hover { background: rgba(255,255,255,.18) !important; }
+
+/* Scrollable login box when panel content is tall */
+.login-box {
+  overflow-y: auto;
+  max-height: 95vh;
+}

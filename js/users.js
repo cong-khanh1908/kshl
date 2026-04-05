@@ -1235,3 +1235,343 @@ function exportUsersCSV() {
 
 
 
+
+// =========================================================
+// LOGIN PANEL – Yêu cầu tài khoản / Reset MK ngay trên form đăng nhập
+// Hiển thị IN-PLACE trong login-box, không dùng modal overlay
+// =========================================================
+
+/**
+ * Hiện panel yêu cầu (type = 'new' | 'reset')
+ * Ẩn #lp-main, hiện #lp-new hoặc #lp-reset
+ */
+function loginPanelShow(type) {
+  // Ẩn panel chính
+  const main = document.getElementById('lp-main');
+  if (main) main.style.display = 'none';
+
+  // Reset panel về step 1
+  lpResetPanel(type);
+
+  // Populate datalist khoa phòng (nếu có)
+  const dl = document.getElementById('lp-new-dept-list');
+  if (dl) {
+    dl.innerHTML = '';
+    (DEPTS || []).forEach(d => {
+      const opt = document.createElement('option'); opt.value = d.name; dl.appendChild(opt);
+    });
+  }
+
+  // Hiện panel
+  const panel = document.getElementById('lp-' + type);
+  if (panel) { panel.style.display = ''; panel.style.animation = 'loginAppear .25s ease'; }
+
+  // Scroll login-box về đầu
+  const box = document.querySelector('.login-box');
+  if (box) box.scrollTop = 0;
+}
+
+/** Quay lại panel đăng nhập chính */
+function loginPanelBack() {
+  ['lp-new', 'lp-reset'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  const main = document.getElementById('lp-main');
+  if (main) { main.style.display = ''; main.style.animation = 'loginAppear .2s ease'; }
+  const box = document.querySelector('.login-box');
+  if (box) box.scrollTop = 0;
+}
+
+/** Reset panel về trạng thái ban đầu (step 1) */
+function lpResetPanel(type) {
+  const prefix = 'lp-' + type + '-';
+  // Show form, hide preview & done
+  ['form','preview','done'].forEach((s,i) => {
+    const el = document.getElementById(prefix + s);
+    if (el) el.style.display = i === 0 ? '' : 'none';
+  });
+  // Clear fields
+  const fields = ['fullname','username','contact','dept','note'];
+  fields.forEach(f => {
+    const el = document.getElementById(prefix + f);
+    if (el) el.value = '';
+  });
+  // Clear error
+  const err = document.getElementById(prefix + 'err');
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  // Clear hints
+  ['uname-hint','contact-hint','uname-ok'].forEach(h => {
+    const el = document.getElementById(prefix + h);
+    if (!el) return;
+    if (h === 'uname-ok') { el.style.display = 'none'; }
+    else if (h === 'uname-hint') {
+      el.style.color = 'rgba(255,255,255,.45)';
+      el.textContent = type === 'new'
+        ? 'Chỉ dùng chữ thường, số, dấu gạch dưới (_). Tối thiểu 4 ký tự.'
+        : 'Nhập chính xác tên đăng nhập đã được cấp.';
+    } else { el.style.display = 'none'; }
+  });
+  // Reset urgency radio
+  if (type === 'new') {
+    const normalR = document.querySelector('input[name="lp-new-urgency"][value="normal"]');
+    if (normalR) normalR.checked = true;
+    lpUrgencyChange('new', 'normal');
+  }
+  // Reset note counter
+  const ct = document.getElementById(prefix + 'note-ct');
+  if (ct) ct.textContent = type === 'new' ? '0/300' : '0/200';
+  // Reset steps
+  lpStepIndicator(type, 1);
+}
+
+/** Cập nhật step indicator */
+function lpStepIndicator(type, step) {
+  [1,2,3].forEach(s => {
+    const el = document.getElementById('lp-' + type + '-s' + s);
+    if (!el) return;
+    el.className = 'lp-step';
+    if (s < step) {
+      el.classList.add('lp-step-done');
+    } else if (s === step) {
+      el.classList.add('lp-step-active');
+      if (type === 'reset') el.classList.add('lp-step-orange');
+    }
+    // Update step num
+    const num = el.querySelector('.lp-step-num');
+    if (num) {
+      num.className = 'lp-step-num';
+      if (s < step) num.textContent = '✓';
+      else num.textContent = s;
+      if (s === step && type === 'reset') num.classList.add('lp-step-num-orange');
+    }
+  });
+}
+
+/** Auto-generate username từ họ tên (cho form new) */
+function lpAutoUsername(fullname) {
+  if (!fullname || fullname.length < 3) return;
+  const unameEl = document.getElementById('lp-new-username');
+  if (!unameEl || unameEl.value) return; // không ghi đè nếu đã nhập
+  const parts = fullname.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/đ/g,'d').replace(/[^a-z0-9\s]/g,'')
+    .split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return;
+  const last = parts[parts.length - 1];
+  const initials = parts.slice(0, -1).map(p => p[0]).join('');
+  unameEl.value = last + '_' + initials;
+  lpValidateUsername(unameEl.value, 'new');
+}
+
+/** Validate username realtime */
+function lpValidateUsername(val, type) {
+  const hint = document.getElementById('lp-' + type + '-uname-hint');
+  const ok   = document.getElementById('lp-' + type + '-uname-ok');
+  if (!hint) return;
+  if (!val) {
+    hint.style.color = 'rgba(255,255,255,.45)';
+    hint.textContent = type === 'new'
+      ? 'Chỉ dùng chữ thường, số, dấu gạch dưới (_). Tối thiểu 4 ký tự.'
+      : 'Nhập chính xác tên đăng nhập đã được cấp.';
+    if (ok) ok.style.display = 'none';
+    return;
+  }
+  if (!/^[a-z0-9_]+$/.test(val)) {
+    hint.textContent = '⚠️ Chỉ dùng chữ thường không dấu, số và dấu gạch dưới (_)';
+    hint.style.color = '#FF5252';
+    if (ok) ok.style.display = 'none';
+    return;
+  }
+  if (val.length < 4) {
+    hint.textContent = `⚠️ Cần tối thiểu 4 ký tự (hiện ${val.length})`;
+    hint.style.color = '#FFB74D';
+    if (ok) ok.style.display = 'none';
+    return;
+  }
+  // Kiểm tra tồn tại
+  const exists = (USERS || []).find(u => u.username === val);
+  if (type === 'new' && exists) {
+    hint.textContent = `❌ Tên "${val}" đã tồn tại – chọn tên khác`;
+    hint.style.color = '#FF5252';
+    if (ok) ok.style.display = 'none';
+  } else if (type === 'reset' && !exists) {
+    hint.textContent = `⚠️ Không tìm thấy tài khoản "${val}" – kiểm tra lại`;
+    hint.style.color = '#FFB74D';
+    if (ok) ok.style.display = 'none';
+  } else {
+    hint.textContent = type === 'reset' ? `✅ Tìm thấy tài khoản "${val}"` : `✅ Tên đăng nhập hợp lệ`;
+    hint.style.color = '#A5D6A7';
+    if (ok) ok.style.display = 'inline';
+  }
+}
+
+/** Validate contact realtime */
+function lpValidateContact(val, type) {
+  const hint = document.getElementById('lp-' + type + '-contact-hint');
+  if (!hint) return;
+  if (!val) { hint.style.display = 'none'; return; }
+  const isPhone = /^0[0-9]{8,9}$/.test(val.replace(/\s/g,''));
+  const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+  if (isPhone) {
+    hint.textContent = '✅ Số điện thoại hợp lệ';
+    hint.style.color = '#A5D6A7';
+  } else if (isEmail) {
+    hint.textContent = '✅ Email hợp lệ';
+    hint.style.color = '#A5D6A7';
+  } else if (val.length > 5) {
+    hint.textContent = 'ℹ️ Nhập SĐT (VD: 0901234567) hoặc email';
+    hint.style.color = 'rgba(255,255,255,.45)';
+  } else {
+    hint.style.display = 'none'; return;
+  }
+  hint.style.display = '';
+}
+
+/** Đếm ký tự textarea */
+function lpCountNote(el, counterId, max) {
+  if (!el) return;
+  if (el.value.length > max) el.value = el.value.slice(0, max);
+  const ct = document.getElementById(counterId);
+  if (ct) ct.textContent = el.value.length + '/' + max;
+}
+
+/** Thay đổi mức ưu tiên */
+function lpUrgencyChange(type, val) {
+  if (type !== 'new') return;
+  const n = document.getElementById('lp-new-urg-n');
+  const u = document.getElementById('lp-new-urg-u');
+  if (n) n.style.borderColor = val === 'normal' ? 'rgba(165,214,167,.7)' : 'rgba(255,255,255,.15)';
+  if (u) u.style.borderColor = val === 'urgent' ? 'rgba(255,82,82,.7)' : 'rgba(255,255,255,.15)';
+}
+
+/** Validate Step 1 và chuyển sang Step 2 (preview) */
+function lpStep1Next(type) {
+  const p = 'lp-' + type + '-';
+  const fullname = (document.getElementById(p + 'fullname')?.value || '').trim();
+  const username = (document.getElementById(p + 'username')?.value || '').trim();
+  const contact  = (document.getElementById(p + 'contact')?.value || '').trim();
+  const errEl    = document.getElementById(p + 'err');
+
+  const showErr = msg => {
+    errEl.innerHTML = '⚠️ ' + msg;
+    errEl.style.display = 'block';
+    errEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+  errEl.style.display = 'none';
+
+  if (!fullname || fullname.length < 3) return showErr('Vui lòng nhập họ tên đầy đủ (tối thiểu 3 ký tự)');
+  if (!username) return showErr('Vui lòng nhập tên đăng nhập');
+  if (username.length < 4) return showErr('Tên đăng nhập tối thiểu 4 ký tự');
+  if (!/^[a-z0-9_]+$/.test(username)) return showErr('Tên đăng nhập chỉ dùng chữ thường, số, dấu gạch dưới (_)');
+  if (!contact || contact.length < 8) return showErr('Vui lòng nhập SĐT hoặc email liên hệ hợp lệ');
+
+  // Kiểm tra tồn tại
+  const exists = (USERS || []).find(u => u.username === username);
+  if (type === 'new' && exists) return showErr(`Tên đăng nhập "<b>${username}</b>" đã tồn tại. Vui lòng chọn tên khác.`);
+  if (type === 'reset' && !exists) return showErr(`Không tìm thấy tài khoản "<b>${username}</b>". Kiểm tra lại tên đăng nhập.`);
+
+  // Kiểm tra yêu cầu pending trùng
+  const reqs = getAccountRequests();
+  const dup = reqs.find(r => r.username === username && r.type === type && r.status === 'pending');
+  if (dup) return showErr(`Đã có yêu cầu ${type==='new'?'cấp tài khoản':'reset mật khẩu'} cho "<b>${username}</b>" đang chờ xử lý.`);
+
+  // Build preview
+  lpBuildPreview(type);
+  // Chuyển sang step 2
+  document.getElementById(p + 'form').style.display = 'none';
+  document.getElementById(p + 'preview').style.display = '';
+  lpStepIndicator(type, 2);
+  const box = document.querySelector('.login-box');
+  if (box) box.scrollTop = 0;
+}
+
+/** Build preview HTML */
+function lpBuildPreview(type) {
+  const p = 'lp-' + type + '-';
+  const fullname = document.getElementById(p + 'fullname')?.value.trim() || '';
+  const username = document.getElementById(p + 'username')?.value.trim() || '';
+  const contact  = document.getElementById(p + 'contact')?.value.trim() || '';
+  const dept     = document.getElementById(p + 'dept')?.value.trim() || '';
+  const note     = document.getElementById(p + 'note')?.value.trim() || '';
+  const urgency  = type === 'new'
+    ? (document.querySelector('input[name="lp-new-urgency"]:checked')?.value || 'normal')
+    : 'normal';
+
+  const isNew = type === 'new';
+  const previewEl = document.getElementById(p + 'preview-body');
+  if (!previewEl) return;
+
+  previewEl.innerHTML = `
+    <div style="padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,.15);font-weight:800;font-size:14px;">
+      ${isNew ? '📋 Yêu cầu cấp tài khoản mới' : '🔑 Yêu cầu reset mật khẩu'}
+    </div>
+    <table style="width:100%;border-collapse:collapse;">
+      <tr><td class="lp-pr-label" style="padding:3px 0;width:42%;font-size:11.5px;color:rgba(255,255,255,.5);">👤 Họ tên:</td><td style="font-weight:700;">${fullname}</td></tr>
+      <tr><td class="lp-pr-label" style="padding:3px 0;font-size:11.5px;color:rgba(255,255,255,.5);">🔤 Tên đăng nhập:</td><td><code>${username}</code></td></tr>
+      <tr><td class="lp-pr-label" style="padding:3px 0;font-size:11.5px;color:rgba(255,255,255,.5);">📞 Liên hệ:</td><td style="font-weight:700;color:#90CAF9;">${contact}</td></tr>
+      ${dept ? `<tr><td class="lp-pr-label" style="padding:3px 0;font-size:11.5px;color:rgba(255,255,255,.5);">🏬 Khoa/Phòng:</td><td>${dept}</td></tr>` : ''}
+      ${isNew && urgency === 'urgent' ? `<tr><td style="padding:3px 0;font-size:11.5px;color:rgba(255,255,255,.5);">⏰ Ưu tiên:</td><td style="color:#FF5252;font-weight:700;">🔴 Gấp / Khẩn</td></tr>` : ''}
+      ${note ? `<tr><td style="padding:3px 0;font-size:11.5px;color:rgba(255,255,255,.5);vertical-align:top;">📝 Ghi chú:</td><td style="font-style:italic;font-size:12.5px;">${note}</td></tr>` : ''}
+    </table>
+    <div style="margin-top:12px;padding:8px 11px;background:rgba(255,255,255,.08);border-radius:7px;font-size:11.5px;color:rgba(255,255,255,.65);">
+      ${isNew
+        ? '✅ Mật khẩu mặc định sau khi Admin cấp: <b style="color:#90CAF9;">BV@2024</b>. Vui lòng đổi mật khẩu ngay sau khi đăng nhập lần đầu.'
+        : '🔑 Admin sẽ reset mật khẩu tài khoản <b style="color:#FFCC80;">' + username + '</b> về <b>BV@2024</b>. Đổi mật khẩu ngay khi đăng nhập.'}
+    </div>`;
+}
+
+/** Quay lại step 1 từ preview */
+function lpPreviewBack(type) {
+  const p = 'lp-' + type + '-';
+  document.getElementById(p + 'preview').style.display = 'none';
+  document.getElementById(p + 'form').style.display = '';
+  lpStepIndicator(type, 1);
+  const box = document.querySelector('.login-box');
+  if (box) box.scrollTop = 0;
+}
+
+/** Xác nhận gửi yêu cầu */
+function lpConfirmSubmit(type) {
+  const p = 'lp-' + type + '-';
+  const fullname = document.getElementById(p + 'fullname')?.value.trim() || '';
+  const username = document.getElementById(p + 'username')?.value.trim() || '';
+  const contact  = document.getElementById(p + 'contact')?.value.trim() || '';
+  const dept     = document.getElementById(p + 'dept')?.value.trim() || '';
+  const note     = document.getElementById(p + 'note')?.value.trim() || '';
+  const urgency  = type === 'new'
+    ? (document.querySelector('input[name="lp-new-urgency"]:checked')?.value || 'normal')
+    : 'normal';
+
+  const reqs = getAccountRequests();
+  const req = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    type,
+    fullname,
+    username,
+    contact,
+    dept,
+    note,
+    urgency,
+    createdAt: new Date().toISOString(),
+    doneAt: null,
+    status: 'pending'
+  };
+  reqs.unshift(req);
+  saveAccountRequests(reqs);
+
+  // Cập nhật done message
+  const doneMsg = document.getElementById(p + 'done-msg');
+  if (doneMsg) {
+    doneMsg.innerHTML = type === 'new'
+      ? `Yêu cầu cấp tài khoản cho <b>${fullname}</b>.<br>Admin sẽ liên hệ qua: <b style="color:#90CAF9;">${contact}</b>`
+      : `Yêu cầu reset mật khẩu tài khoản <b>${username}</b>.<br>Admin sẽ liên hệ qua: <b style="color:#FFCC80;">${contact}</b>`;
+  }
+
+  // Chuyển sang step 3 (done)
+  document.getElementById(p + 'preview').style.display = 'none';
+  document.getElementById(p + 'done').style.display = '';
+  lpStepIndicator(type, 3);
+  const box = document.querySelector('.login-box');
+  if (box) box.scrollTop = 0;
+}
