@@ -134,6 +134,11 @@ async function checkBYTLoginStatus() {
 // =========================================================
 // ĐĂNG NHẬP BYT QUA POPUP + AUTO-FILL
 // =========================================================
+// Dựa trên HTML thực tế trang hailong.chatluongbenhvien.vn/user/login:
+//   <input type="text"     id="edit-name" name="name" />
+//   <input type="password" id="edit-pass" name="pass" />
+//   <input type="submit"   id="edit-submit" name="op" value="Đăng nhập" />
+// Plugin hide_submit.js của Drupal 7 sẽ ẩn nút sau khi click → cần submit form trực tiếp
 function loginBYTNow() {
   if (!CFG.bytuser || !CFG.bytpass) {
     toast('⚠️ Chưa cấu hình tài khoản BYT. Vào Cấu hình → Tài khoản BYT.', 'warning');
@@ -152,6 +157,7 @@ function loginBYTNow() {
   const pass = CFG.bytpass;
   setBYTStatusUI('checking', '🔄 Đang mở trang BYT và tự động đăng nhập...');
   addBYTLog('info', 'Mở cửa sổ đăng nhập BYT: ' + BYT_LOGIN_URL);
+  addBYTLog('info', 'Tài khoản: ' + user);
 
   let attempts   = 0;
   let injected   = false;
@@ -173,68 +179,74 @@ function loginBYTNow() {
       const curUrl = win.location.href || '';
       const ready  = win.document.readyState === 'complete';
 
-      // ★ Trang login đã load hoàn toàn – chờ thêm 800ms để Drupal 7 JS khởi tạo
+      // ★ Trang /user/login đã load xong – điền thông tin
       if (!injected && ready && curUrl.includes('/user/login')) {
         injected = true;
-        addBYTLog('info', 'Trang login BYT đã tải – đang điền thông tin...');
+        addBYTLog('info', 'Trang login BYT đã tải xong – đang điền thông tin...');
 
+        // ★ Delay 600ms để tất cả Drupal JS (jQuery, hide_submit...) khởi tạo xong
         setTimeout(() => {
           try {
-            const fillResult = win.eval(`(function(){
-              // ★ Drupal 7 chuẩn: ID là edit-name, edit-pass, edit-submit
-              // Thêm nhiều selector dự phòng cho các custom theme
-              var u = document.getElementById('edit-name') ||
-                      document.querySelector('input[name="name"]') ||
-                      document.querySelector('input[type="text"][id*="name"]') ||
-                      document.querySelector('.form-item-name input, .form-item-thi-khoản-đăng-nhập input') ||
-                      document.querySelector('input[autocomplete="username"]') ||
-                      document.querySelector('form input[type="text"]:first-of-type');
+            const result = win.eval(`(function(){
+              try {
+                // ★ Selectors chính xác từ HTML thực tế BYT (Drupal 7)
+                var u = document.getElementById('edit-name');
+                var p = document.getElementById('edit-pass');
+                var form = document.getElementById('user-login');
 
-              var p = document.getElementById('edit-pass') ||
-                      document.querySelector('input[name="pass"]') ||
-                      document.querySelector('input[type="password"]') ||
-                      document.querySelector('.form-item-pass input') ||
-                      document.querySelector('input[autocomplete="current-password"]');
+                if (!u) return 'ERR: Không tìm thấy field #edit-name (Tài khoản đăng nhập)';
+                if (!p) return 'ERR: Không tìm thấy field #edit-pass (Mật khẩu)';
+                if (!form) return 'ERR: Không tìm thấy form #user-login';
 
-              var b = document.getElementById('edit-submit') ||
-                      document.querySelector('input[type="submit"][value*="Đăng"]') ||
-                      document.querySelector('input[type="submit"][value*="đăng"]') ||
-                      document.querySelector('input[type="submit"][value*="Log"]') ||
-                      document.querySelector('input[type="submit"][value*="login"]') ||
-                      document.querySelector('input[type="submit"]') ||
-                      document.querySelector('button[type="submit"]');
+                // Điền giá trị trực tiếp vào DOM
+                u.value = ${JSON.stringify(user)};
+                p.value = ${JSON.stringify(pass)};
 
-              if (!u) return 'ERR:Không tìm thấy ô Tài khoản đăng nhập';
-              if (!p) return 'ERR:Không tìm thấy ô Mật khẩu';
+                // Xác nhận đã điền
+                var uOk = u.value === ${JSON.stringify(user)};
+                var pOk = p.value.length > 0;
 
-              u.value = ${JSON.stringify(user)};
-              p.value = ${JSON.stringify(pass)};
+                if (!uOk) return 'ERR: Không điền được tài khoản (value không giữ)';
+                if (!pOk) return 'ERR: Không điền được mật khẩu';
 
-              // Kích hoạt events để Drupal validation chạy
-              ['input','change','keyup','blur'].forEach(function(ev) {
-                u.dispatchEvent(new Event(ev, {bubbles:true}));
-                p.dispatchEvent(new Event(ev, {bubbles:true}));
-              });
+                // ★ Submit form trực tiếp (bỏ qua hide_submit plugin của Drupal)
+                // KHÔNG dùng btn.click() vì hide_submit sẽ disable nút ngay lập tức
+                // Thay vào đó: tạo hidden input op và submit form
+                var opInput = form.querySelector('input[name="op"]');
+                if (!opInput) {
+                  // Tạo input hidden nếu chưa có
+                  opInput = document.createElement('input');
+                  opInput.type = 'hidden';
+                  opInput.name = 'op';
+                  form.appendChild(opInput);
+                }
+                opInput.value = 'Đăng nhập';
 
-              if (b) {
-                // Thêm delay nhỏ để Drupal xử lý events xong rồi mới click
-                setTimeout(function(){ b.click(); }, 200);
-                return 'OK:Đã điền và click "' + (b.value || b.textContent.trim() || 'submit') + '"';
+                // Submit form natively – bypass Drupal JS hoàn toàn
+                form.submit();
+
+                return 'OK: Đã điền tài khoản=' + u.value + ' | Đang submit form...';
+
+              } catch(err) {
+                return 'ERR: ' + err.message;
               }
-              return 'OK:Đã điền (không tìm thấy nút Submit)';
             })()`);
 
-            addBYTLog('info', 'Auto-fill: ' + fillResult);
-            if (fillResult && fillResult.startsWith('ERR:')) {
-              addBYTLog('warn', '⚠️ ' + fillResult + ' → hãy điền thủ công trên cửa sổ BYT');
+            addBYTLog('info', 'Kết quả: ' + result);
+
+            if (result && result.startsWith('ERR:')) {
+              addBYTLog('warn', '⚠️ ' + result);
+              addBYTLog('warn', 'Hãy điền thủ công trên cửa sổ BYT đang mở');
             }
-          } catch(fillErr) {
-            addBYTLog('warn', 'Lỗi auto-fill: ' + fillErr.message + ' → hãy điền thủ công');
+
+          } catch(evalErr) {
+            // Cross-origin = cửa sổ đã chuyển trang (không phải /user/login nữa)
+            addBYTLog('warn', 'eval() bị chặn: ' + evalErr.message);
           }
-        }, 800); // ★ 800ms để Drupal JS khởi tạo xong
+        }, 600);
       }
 
-      // ★ Đã redirect sang trang khác = đăng nhập thành công
+      // ★ Đã redirect khỏi /user/login = đăng nhập thành công
       if (injected && ready && !curUrl.includes('/user/login') && curUrl.startsWith('http')) {
         redirected = true;
         clearInterval(iv);
@@ -243,11 +255,12 @@ function loginBYTNow() {
         const lb = document.getElementById('btn-byt-login-now');
         if (lb) lb.style.display = 'none';
         addBYTLog('ok', '✅ Đăng nhập BYT thành công → ' + curUrl);
+        // Đóng popup sau 1.5s
         setTimeout(() => { try { win.close(); } catch(x){} }, 1500);
       }
 
     } catch(e) {
-      // Cross-origin block sau redirect = đăng nhập thành công
+      // Cross-origin exception = đã redirect sang domain BYT (đăng nhập thành công)
       if (injected && !redirected) {
         redirected = true;
         clearInterval(iv);
@@ -260,17 +273,17 @@ function loginBYTNow() {
       }
     }
 
+    // Timeout sau 20 giây
     if (attempts > 40) {
       clearInterval(iv);
       if (!redirected) {
-        setBYTStatusUI('unknown', '⚠️ Hết thời gian. Hãy đăng nhập thủ công trên cửa sổ BYT đang mở.');
-        addBYTLog('warn', 'Timeout 20 giây chờ đăng nhập BYT');
+        setBYTStatusUI('unknown',
+          '⚠️ Hết thời gian tự động. Hãy kiểm tra cửa sổ BYT đang mở và đăng nhập thủ công nếu cần.');
+        addBYTLog('warn', 'Timeout 20 giây – hãy kiểm tra cửa sổ BYT');
       }
     }
   }, 500);
 }
-
-
 // =========================================================
 // FIELD MAPPING: answer.code (VD: "A1") → BYT field name
 // M1/M2/M3/M4: submitted[danh_gia][a][a1]
