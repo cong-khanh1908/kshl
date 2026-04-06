@@ -1,18 +1,46 @@
 // byt.js – Module gửi phiếu lên trang BYT (hailong.chatluongbenhvien.vn)
 // Thuộc dự án Khảo sát Hài lòng – QĐ 56/2024 & QĐ 3869/2019
-// Version: v4.0 – Rewrite hoàn chỉnh: fix cross-origin, field mapping đầy đủ 5 mẫu
+// Version: v5.0 – Rewrite hoàn chỉnh – field mapping chính xác 100% từ HTML thực tế
+// ============================================================
+// Field mapping từ HTML thực tế (5 mẫu):
+//
+// M1 (noi_tru)     form_id: webform_client_form_206847
+//   TTP: submitted[ttp][bvn][1_ten_benh_vien|mabv|ngay_dien_phieu[day/month/year]]
+//        submitted[ttp][kmk][khoa_phong|ma_khoa]
+//   Đánh giá: submitted[danh_gia][SEC][SECnum]  radio value=1..5
+//
+// M2 (ngoai_tru)   form_id: webform_client_form_206848  (giống M1)
+//
+// M3 (nhan_vien)   form_id: webform_client_form_1468
+//   TTP: submitted[ttp][bvn][...] (giống M1)
+//        submitted[ttp][khoa_phong]  ← KHÔNG có wrapper [kmk] như M1/M2
+//   Đánh giá: submitted[danh_gia][SEC][SECnum]  radio value=1..5
+//
+// M4 (me_sinh_con) form_id: webform_client_form_22799
+//   TTP: submitted[thong_tin_phieu][benhvien_ngay][1_ten_benh_vien|mabv|ngay_dien_phieu[...]]
+//        submitted[thong_tin_phieu][khoa_ma_khoa][khoa_phong|ma_khoa]
+//   Đánh giá: submitted[danh_gia][SEC][SECnum]  radio value=1..5 (sections a..h)
+//
+// M5 (nuoi_con)    form_id: webform_client_form_22800
+//   TTP: submitted[thong_tin_phieu][benhvien_ngay][...] (giống M4)
+//   Section B checkbox nhiều: submitted[danh_gia][bN][select][VALUE]
+//   Section B radio đơn (b5,b6,b8,b11): submitted[danh_gia][bN][select]  value=VAL
+//   Section B text (b12..b15, b6k...): submitted[danh_gia][bNk|bN_a|bN_b]
 // ============================================================
 
-// =========================================================
-// CONSTANTS
-// =========================================================
 const BYT_BASE      = 'https://hailong.chatluongbenhvien.vn';
 const BYT_LOGIN_URL = BYT_BASE + '/user/login';
 
-// Node IDs từng mẫu phiếu (webform-client-form-XXXXX)
 const BYT_NODE_IDS = { m1: 206847, m2: 206848, m3: 1468, m4: 22799, m5: 22800 };
 
-// URL action của form submit
+const BYT_FORM_IDS = {
+  m1: 'webform_client_form_206847',
+  m2: 'webform_client_form_206848',
+  m3: 'webform_client_form_1468',
+  m4: 'webform_client_form_22799',
+  m5: 'webform_client_form_22800',
+};
+
 const BYT_FORM_ACTIONS = {
   m1: '/nguoi-benh-noi-tru-v2',
   m2: '/nguoi-benh-ngoai-tru-v2',
@@ -24,7 +52,7 @@ const BYT_FORM_ACTIONS = {
 // =========================================================
 // STATE
 // =========================================================
-let bytLoginStatus   = 'unknown'; // unknown|checking|logged-in|logged-out|error
+let bytLoginStatus   = 'unknown';
 let bytUploadRunning = false;
 let bytSelectedIds   = new Set();
 let bytLog           = [];
@@ -80,47 +108,31 @@ function setBYTStatusUI(type, msg) {
 }
 
 // =========================================================
-// CHECK LOGIN – KHÔNG DÙNG IFRAME (bị chặn X-Frame-Options)
-// Chiến lược: fetch no-cors → opaque → thông báo thủ công
+// CHECK LOGIN STATUS
 // =========================================================
 async function checkBYTLoginStatus() {
   const loginBtn = document.getElementById('btn-byt-login-now');
   setBYTStatusUI('checking', '🔄 Đang kiểm tra kết nối đến trang BYT...');
   if (loginBtn) loginBtn.style.display = 'none';
 
-  // ★ KHÔNG fetch /user/me → endpoint này không tồn tại trên BYT (404)
-  // ★ KHÔNG dùng iframe → bị chặn bởi X-Frame-Options: sameorigin
-  // Chiến lược đúng: ping server bằng no-cors HEAD, sau đó hướng dẫn
-  // đăng nhập thủ công qua popup (không thể đọc session cross-origin)
-
   try {
     const ctrl  = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 6000);
-
-    await fetch(BYT_BASE, {
-      method: 'HEAD',
-      mode: 'no-cors',
-      cache: 'no-store',
-      signal: ctrl.signal
-    });
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    await fetch(BYT_BASE, { method: 'HEAD', mode: 'no-cors', cache: 'no-store', signal: ctrl.signal });
     clearTimeout(timer);
 
-    // Server BYT đang hoạt động – hướng dẫn người dùng
     setBYTStatusUI('unknown',
       '🔓 Trang BYT đang hoạt động. Do chính sách bảo mật trình duyệt, ' +
       'không thể tự động kiểm tra phiên đăng nhập. ' +
       'Nhấn "Đăng nhập BYT" để đăng nhập và gửi phiếu.');
     if (loginBtn) loginBtn.style.display = '';
     bytLoginStatus = 'unknown';
-
   } catch(e) {
     if (e.name === 'AbortError') {
       setBYTStatusUI('error', '❌ Timeout – không kết nối được trang BYT. Kiểm tra mạng.');
-    } else if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
-      // no-cors thường không throw trừ khi offline hoàn toàn
+    } else if (e.message && (e.message.includes('Failed to fetch') || e.message.includes('NetworkError'))) {
       setBYTStatusUI('error', '❌ Không thể kết nối trang BYT. Kiểm tra kết nối mạng.');
     } else {
-      // Fetch no-cors thành công (opaque response không throw)
       setBYTStatusUI('unknown', '🔓 Nhấn "Đăng nhập BYT" để đăng nhập và gửi phiếu.');
       if (loginBtn) loginBtn.style.display = '';
       bytLoginStatus = 'unknown';
@@ -133,12 +145,10 @@ async function checkBYTLoginStatus() {
 
 // =========================================================
 // ĐĂNG NHẬP BYT QUA POPUP + AUTO-FILL
+// HTML Drupal 7 thực tế:
+//   form#user-login  →  input#edit-name (name), input#edit-pass (pass)
+//   hide_submit plugin che nút → phải dùng form.submit() trực tiếp
 // =========================================================
-// Dựa trên HTML thực tế trang hailong.chatluongbenhvien.vn/user/login:
-//   <input type="text"     id="edit-name" name="name" />
-//   <input type="password" id="edit-pass" name="pass" />
-//   <input type="submit"   id="edit-submit" name="op" value="Đăng nhập" />
-// Plugin hide_submit.js của Drupal 7 sẽ ẩn nút sau khi click → cần submit form trực tiếp
 function loginBYTNow() {
   if (!CFG.bytuser || !CFG.bytpass) {
     toast('⚠️ Chưa cấu hình tài khoản BYT. Vào Cấu hình → Tài khoản BYT.', 'warning');
@@ -146,8 +156,7 @@ function loginBYTNow() {
     return;
   }
 
-  const win = window.open(BYT_LOGIN_URL, 'byt_login_window',
-    'width=1050,height=720,left=80,top=60');
+  const win = window.open(BYT_LOGIN_URL, 'byt_login_window', 'width=1050,height=720,left=80,top=60');
   if (!win) {
     toast('❌ Trình duyệt chặn popup. Vui lòng cho phép popup từ trang này.', 'error');
     return;
@@ -159,9 +168,7 @@ function loginBYTNow() {
   addBYTLog('info', 'Mở cửa sổ đăng nhập BYT: ' + BYT_LOGIN_URL);
   addBYTLog('info', 'Tài khoản: ' + user);
 
-  let attempts   = 0;
-  let injected   = false;
-  let redirected = false;
+  let attempts = 0, injected = false, redirected = false;
 
   const iv = setInterval(() => {
     attempts++;
@@ -179,74 +186,39 @@ function loginBYTNow() {
       const curUrl = win.location.href || '';
       const ready  = win.document.readyState === 'complete';
 
-      // ★ Trang /user/login đã load xong – điền thông tin
       if (!injected && ready && curUrl.includes('/user/login')) {
         injected = true;
-        addBYTLog('info', 'Trang login BYT đã tải xong – đang điền thông tin...');
-
-        // ★ Delay 600ms để tất cả Drupal JS (jQuery, hide_submit...) khởi tạo xong
+        addBYTLog('info', 'Trang login đã tải – điền thông tin...');
         setTimeout(() => {
           try {
             const result = win.eval(`(function(){
               try {
-                // ★ Selectors chính xác từ HTML thực tế BYT (Drupal 7)
                 var u = document.getElementById('edit-name');
                 var p = document.getElementById('edit-pass');
-                var form = document.getElementById('user-login');
-
-                if (!u) return 'ERR: Không tìm thấy field #edit-name (Tài khoản đăng nhập)';
-                if (!p) return 'ERR: Không tìm thấy field #edit-pass (Mật khẩu)';
-                if (!form) return 'ERR: Không tìm thấy form #user-login';
-
-                // Điền giá trị trực tiếp vào DOM
+                var f = document.getElementById('user-login');
+                if (!u) return 'ERR: Không tìm thấy #edit-name';
+                if (!p) return 'ERR: Không tìm thấy #edit-pass';
+                if (!f) return 'ERR: Không tìm thấy form #user-login';
                 u.value = ${JSON.stringify(user)};
                 p.value = ${JSON.stringify(pass)};
-
-                // Xác nhận đã điền
-                var uOk = u.value === ${JSON.stringify(user)};
-                var pOk = p.value.length > 0;
-
-                if (!uOk) return 'ERR: Không điền được tài khoản (value không giữ)';
-                if (!pOk) return 'ERR: Không điền được mật khẩu';
-
-                // ★ Submit form trực tiếp (bỏ qua hide_submit plugin của Drupal)
-                // KHÔNG dùng btn.click() vì hide_submit sẽ disable nút ngay lập tức
-                // Thay vào đó: tạo hidden input op và submit form
-                var opInput = form.querySelector('input[name="op"]');
-                if (!opInput) {
-                  // Tạo input hidden nếu chưa có
-                  opInput = document.createElement('input');
-                  opInput.type = 'hidden';
-                  opInput.name = 'op';
-                  form.appendChild(opInput);
-                }
-                opInput.value = 'Đăng nhập';
-
-                // Submit form natively – bypass Drupal JS hoàn toàn
-                form.submit();
-
-                return 'OK: Đã điền tài khoản=' + u.value + ' | Đang submit form...';
-
-              } catch(err) {
-                return 'ERR: ' + err.message;
-              }
+                if (u.value !== ${JSON.stringify(user)}) return 'ERR: Không set được username';
+                var op = f.querySelector('input[name="op"]');
+                if (!op) { op = document.createElement('input'); op.type='hidden'; op.name='op'; f.appendChild(op); }
+                op.value = 'Đăng nhập';
+                f.submit();
+                return 'OK: Đã submit form đăng nhập';
+              } catch(e) { return 'ERR: ' + e.message; }
             })()`);
-
             addBYTLog('info', 'Kết quả: ' + result);
-
             if (result && result.startsWith('ERR:')) {
-              addBYTLog('warn', '⚠️ ' + result);
-              addBYTLog('warn', 'Hãy điền thủ công trên cửa sổ BYT đang mở');
+              addBYTLog('warn', '⚠️ ' + result + ' – hãy điền thủ công trong cửa sổ BYT');
             }
-
-          } catch(evalErr) {
-            // Cross-origin = cửa sổ đã chuyển trang (không phải /user/login nữa)
-            addBYTLog('warn', 'eval() bị chặn: ' + evalErr.message);
+          } catch(e) {
+            addBYTLog('warn', 'eval() bị chặn: ' + e.message);
           }
-        }, 600);
+        }, 700);
       }
 
-      // ★ Đã redirect khỏi /user/login = đăng nhập thành công
       if (injected && ready && !curUrl.includes('/user/login') && curUrl.startsWith('http')) {
         redirected = true;
         clearInterval(iv);
@@ -255,12 +227,9 @@ function loginBYTNow() {
         const lb = document.getElementById('btn-byt-login-now');
         if (lb) lb.style.display = 'none';
         addBYTLog('ok', '✅ Đăng nhập BYT thành công → ' + curUrl);
-        // Đóng popup sau 1.5s
         setTimeout(() => { try { win.close(); } catch(x){} }, 1500);
       }
-
     } catch(e) {
-      // Cross-origin exception = đã redirect sang domain BYT (đăng nhập thành công)
       if (injected && !redirected) {
         redirected = true;
         clearInterval(iv);
@@ -272,41 +241,154 @@ function loginBYTNow() {
         setTimeout(() => { try { win.close(); } catch(x){} }, 1500);
       }
     }
-
-    // Timeout sau 20 giây
-    if (attempts > 40) {
+    if (attempts > 50) {
       clearInterval(iv);
       if (!redirected) {
-        setBYTStatusUI('unknown',
-          '⚠️ Hết thời gian tự động. Hãy kiểm tra cửa sổ BYT đang mở và đăng nhập thủ công nếu cần.');
-        addBYTLog('warn', 'Timeout 20 giây – hãy kiểm tra cửa sổ BYT');
+        setBYTStatusUI('unknown', '⚠️ Hết thời gian tự động. Hãy đăng nhập thủ công trong cửa sổ BYT.');
+        addBYTLog('warn', 'Timeout 25 giây – hãy kiểm tra cửa sổ BYT đang mở');
       }
     }
   }, 500);
 }
+
 // =========================================================
-// FIELD MAPPING: answer.code (VD: "A1") → BYT field name
-// M1/M2/M3/M4: submitted[danh_gia][a][a1]
-// M5 section B: submitted[b1][select][value]
-// M5 section A/C: submitted[a.a1] / submitted[c.c1]
+// BUILD FILL SCRIPT
+// Tạo đoạn code JS để inject vào cửa sổ BYT qua win.eval()
+// Điền đầy đủ: TTP header + câu trả lời đánh giá + submit
 // =========================================================
-function bytFieldName(type, code) {
-  if (!code) return null;
-  const sec  = code[0].toLowerCase();
-  const num  = code.slice(1);
-  const qkey = sec + num; // vd: 'a1', 'b10', 'e6'
+function _buildFillScript(rec) {
+  const type    = rec.type;
+  const answers = (rec.answers || []).filter(a => a.value && parseInt(a.value) > 0);
+  const hvname  = rec.benhvien || rec.donvi || CFG.hvname || '';
+  const khoa    = rec.khoa || rec.donvi || '';
+  const makhoa  = rec.makhoa || '';
+  const mabv    = CFG.mabv || '';
+  const ngay    = (rec.ngay || new Date().toISOString().split('T')[0]).split('-');
+  const dd = ngay[2] || '', mm = ngay[1] || '', yy = ngay[0] || '';
+
+  const useThongTinPhieu = (type === 'm4' || type === 'm5');
+  const L = [];  // lines of JS code
+
+  L.push('(function(){');
+  L.push('  try {');
+  L.push('    var filled=0, missing=[], log=[];');
+
+  // === ĐIỀN TTP HEADER ===
+  if (!useThongTinPhieu) {
+    // M1, M2, M3
+    L.push('    // === TTP – submitted[ttp][bvn|kmk|...] ===');
+    L.push('    var _s=function(sel,val){var e=document.querySelector(sel);if(e){e.value=val;return true;}return false;};');
+    L.push('    _s(\'input[name="submitted[ttp][bvn][1_ten_benh_vien]"]\', ' + JSON.stringify(hvname) + ');');
+    L.push('    _s(\'input[name="submitted[ttp][bvn][mabv]"]\', ' + JSON.stringify(mabv) + ');');
+    L.push('    _s(\'input[name="submitted[ttp][bvn][ngay_dien_phieu][day]"],select[name="submitted[ttp][bvn][ngay_dien_phieu][day]"]\', ' + JSON.stringify(dd) + ');');
+    L.push('    _s(\'input[name="submitted[ttp][bvn][ngay_dien_phieu][month]"],select[name="submitted[ttp][bvn][ngay_dien_phieu][month]"]\', ' + JSON.stringify(mm) + ');');
+    L.push('    _s(\'input[name="submitted[ttp][bvn][ngay_dien_phieu][year]"],select[name="submitted[ttp][bvn][ngay_dien_phieu][year]"]\', ' + JSON.stringify(yy) + ');');
+    if (type === 'm3') {
+      // M3: submitted[ttp][khoa_phong] – KHÔNG có [kmk] wrapper
+      L.push('    _s(\'input[name="submitted[ttp][khoa_phong]"],select[name="submitted[ttp][khoa_phong]"]\', ' + JSON.stringify(khoa) + ');');
+    } else {
+      // M1, M2: submitted[ttp][kmk][khoa_phong]
+      L.push('    _s(\'input[name="submitted[ttp][kmk][khoa_phong]"],select[name="submitted[ttp][kmk][khoa_phong]"]\', ' + JSON.stringify(khoa) + ');');
+      L.push('    _s(\'input[name="submitted[ttp][kmk][ma_khoa]"]\', ' + JSON.stringify(makhoa) + ');');
+    }
+  } else {
+    // M4, M5: submitted[thong_tin_phieu][benhvien_ngay|khoa_ma_khoa|...]
+    L.push('    // === TTP – submitted[thong_tin_phieu][...] ===');
+    L.push('    var _s=function(sel,val){var e=document.querySelector(sel);if(e){e.value=val;return true;}return false;};');
+    L.push('    _s(\'input[name="submitted[thong_tin_phieu][benhvien_ngay][1_ten_benh_vien]"]\', ' + JSON.stringify(hvname) + ');');
+    L.push('    _s(\'input[name="submitted[thong_tin_phieu][benhvien_ngay][mabv]"]\', ' + JSON.stringify(mabv) + ');');
+    L.push('    _s(\'input[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][day]"],select[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][day]"]\', ' + JSON.stringify(dd) + ');');
+    L.push('    _s(\'input[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][month]"],select[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][month]"]\', ' + JSON.stringify(mm) + ');');
+    L.push('    _s(\'input[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][year]"],select[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][year]"]\', ' + JSON.stringify(yy) + ');');
+    L.push('    _s(\'input[name="submitted[thong_tin_phieu][khoa_ma_khoa][khoa_phong]"],select[name="submitted[thong_tin_phieu][khoa_ma_khoa][khoa_phong]"]\', ' + JSON.stringify(khoa) + ');');
+    L.push('    _s(\'input[name="submitted[thong_tin_phieu][khoa_ma_khoa][ma_khoa]"]\', ' + JSON.stringify(makhoa) + ');');
+  }
+
+  // === ĐIỀN CÂU TRẢ LỜI ĐÁNH GIÁ ===
+  const answersJson = JSON.stringify(answers.map(a => ({ code: a.code, value: String(a.value) })));
 
   if (type === 'm5') {
-    if (sec === 'b') return 'submitted[' + qkey + '][select]';
-    return 'submitted[' + sec + '.' + qkey + ']';
+    // M5 – section B checkbox/radio đặc biệt
+    // b5, b6, b8, b11 là radio đơn (select giá trị)
+    // b1..b4, b7, b9, b10 là checkbox nhiều lựa chọn [select][VALUE]
+    L.push('    // === Câu trả lời M5 – section B ===');
+    L.push('    var ANS5 = ' + answersJson + ';');
+    L.push('    var M5_RADIO = {b5:1,b6:1,b8:1,b11:1};');
+    L.push('    ANS5.forEach(function(a){');
+    L.push('      var sec = a.code[0].toLowerCase();');
+    L.push('      var num = a.code.slice(1).toLowerCase();');
+    L.push('      var key = sec + num;');
+    L.push('      var val = a.value;');
+    L.push('      if (sec !== "b") return;');
+    L.push('      var el;');
+    L.push('      if (M5_RADIO[key]) {');
+    L.push('        // Radio đơn: name="submitted[danh_gia][bN][select]" value="VAL"');
+    L.push('        el = document.querySelector(\'input[name="submitted[danh_gia][\'+key+\'][select]"][value="\'+val+\'"]\');');
+    L.push('        if (el) { el.checked=true; el.dispatchEvent(new Event("change",{bubbles:true})); filled++; }');
+    L.push('        else missing.push(a.code+"="+val);');
+    L.push('      } else {');
+    L.push('        // Checkbox nhiều: name="submitted[danh_gia][bN][select][VAL]"');
+    L.push('        el = document.querySelector(\'input[name="submitted[danh_gia][\'+key+\'][select][\'+val+\']"]\');');
+    L.push('        if (el) { el.checked=true; el.dispatchEvent(new Event("change",{bubbles:true})); filled++; }');
+    L.push('        else missing.push(a.code+"="+val);');
+    L.push('      }');
+    L.push('    });');
+  } else {
+    // M1, M2, M3, M4 – radio 1..5 → submitted[danh_gia][SEC][SECnum]
+    L.push('    // === Câu trả lời radio 1–5 (M1/M2/M3/M4) ===');
+    L.push('    var ANS = ' + answersJson + ';');
+    L.push('    ANS.forEach(function(a){');
+    L.push('      if (!a.code || !a.value || parseInt(a.value) <= 0) return;');
+    L.push('      var sec  = a.code[0].toLowerCase();');
+    L.push('      var num  = a.code.slice(1).toLowerCase();');
+    L.push('      var qkey = sec + num;');
+    L.push('      var name = "submitted[danh_gia]["+sec+"]["+qkey+"]";');
+    L.push('      var el = document.querySelector(\'input[name="\'+name+\'"][value="\'+a.value+\'"]\');');
+    L.push('      if (el) {');
+    L.push('        el.checked = true;');
+    L.push('        el.dispatchEvent(new Event("change",{bubbles:true}));');
+    L.push('        filled++;');
+    L.push('      } else {');
+    L.push('        missing.push(a.code+"="+a.value);');
+    L.push('      }');
+    L.push('    });');
   }
-  // M1, M2, M3, M4
-  return 'submitted[danh_gia][' + sec + '][' + qkey + ']';
+
+  // === KIỂM TRA TOKENS ===
+  L.push('    // === Lấy form tokens ===');
+  L.push('    var buildId = (document.querySelector(\'input[name="form_build_id"]\') || {}).value || "";');
+  L.push('    var formId  = (document.querySelector(\'input[name="form_id"]\') || {}).value || "";');
+  L.push('    if (!buildId) return { error: "NO_BUILD_ID" };');
+
+  // === SUBMIT ===
+  L.push('    // === Submit form (delay 900ms) ===');
+  L.push('    setTimeout(function(){');
+  L.push('      try {');
+  L.push('        var form = document.querySelector(\'form[id^="webform-client-form-"]\')');
+  L.push('                || document.querySelector("form.webform-client-form");');
+  L.push('        if (form) {');
+  L.push('          var op = form.querySelector(\'input[name="op"]\');');
+  L.push('          if (!op) { op=document.createElement("input"); op.type="hidden"; op.name="op"; form.appendChild(op); }');
+  L.push('          op.value = "Gửi";');
+  L.push('          form.submit();');
+  L.push('        } else {');
+  L.push('          var btn = document.querySelector(\'input[type="submit"][name="op"],input[type="submit"].webform-submit,button[type="submit"]\');');
+  L.push('          if (btn) btn.click();');
+  L.push('        }');
+  L.push('      } catch(se) { log.push("submit-err:"+se.message); }');
+  L.push('    }, 900);');
+
+  L.push('    return { ok:true, filled:filled, total:' + answers.length + ', missing:missing.join(","), formId:formId, log:log.join(";") };');
+  L.push('  } catch(globalErr) {');
+  L.push('    return { error: globalErr.message };');
+  L.push('  }');
+  L.push('})()');
+
+  return L.join('\n');
 }
 
 // =========================================================
-// GỬI PHIẾU QUA POPUP WINDOW (bypass CORS)
-// Mở trang BYT → đọc DOM lấy tokens → điền câu trả lời → submit
+// GỬI PHIẾU QUA POPUP WINDOW
 // =========================================================
 function submitBYTViaPopup(rec) {
   return new Promise((resolve) => {
@@ -315,24 +397,11 @@ function submitBYTViaPopup(rec) {
     if (!action) { resolve({ ok: false, msg: 'Không có URL cho mẫu ' + type }); return; }
 
     const pageUrl = BYT_BASE + action;
-    const win = window.open(pageUrl, 'byt_submit_' + rec.id,
-      'width=1050,height=750,left=50,top=40');
+    const win = window.open(pageUrl, 'byt_submit_' + rec.id, 'width=1100,height=780,left=40,top=30');
     if (!win) { resolve({ ok: false, msg: 'Popup bị chặn – hãy cho phép popup trong trình duyệt' }); return; }
 
-    let attempts     = 0;
-    let tokensDone   = false;
-    let submitted    = false;
-
-    const answers    = (rec.answers || []).filter(a => a.value && parseInt(a.value) > 0);
-    const answersStr = JSON.stringify(answers.map(a => ({ code: a.code, value: a.value })));
-    const typeStr    = JSON.stringify(type);
-    const hvname     = JSON.stringify(rec.benhvien || rec.donvi || CFG.hvname || '');
-    const khoa       = JSON.stringify(rec.khoa || rec.donvi || '');
-    const ngay       = (rec.ngay || new Date().toISOString().split('T')[0]).split('-');
-    const dd = JSON.stringify(ngay[2]||'');
-    const mm = JSON.stringify(ngay[1]||'');
-    const yy = JSON.stringify(ngay[0]||'');
-    const mabv = JSON.stringify(CFG.mabv || '');
+    let attempts = 0, fillDone = false, submitted = false;
+    const injectScript = _buildFillScript(rec);
 
     const iv = setInterval(() => {
       attempts++;
@@ -346,159 +415,84 @@ function submitBYTViaPopup(rec) {
         const curUrl = win.location.href || '';
         const ready  = win.document.readyState === 'complete';
 
-        // Phát hiện chuyển về trang login → chưa đăng nhập
-        if (ready && (curUrl.includes('/user/login') || win.document.title.toLowerCase().includes('đăng nhập'))) {
-          clearInterval(iv);
-          try { win.close(); } catch(x){}
-          resolve({ ok: false, msg: 'CHƯA_ĐĂNG_NHẬP' });
-          return;
+        // Phát hiện redirect về login → chưa đăng nhập
+        if (ready && !fillDone) {
+          const isLogin = curUrl.includes('/user/login') ||
+                          (win.document.title || '').toLowerCase().includes('đăng nhập');
+          if (isLogin) {
+            clearInterval(iv);
+            try { win.close(); } catch(x){}
+            resolve({ ok: false, msg: 'CHƯA_ĐĂNG_NHẬP' });
+            return;
+          }
         }
 
-        // Trang form đã load xong – điền và submit
-        if (ready && !tokensDone) {
-          tokensDone = true;
-          try {
-            const result = win.eval(`(function(){
-  try {
-    var buildId = (document.querySelector('input[name="form_build_id"]') || {}).value || '';
-    var token   = (document.querySelector('input[name="form_token"]') || {}).value || '';
-    var formId  = (document.querySelector('input[name="form_id"]') || {}).value || '';
-    if (!buildId) return { error: 'NO_BUILD_ID' };
-
-    // ---- Điền câu trả lời ----
-    var answers = ${answersStr};
-    var type    = ${typeStr};
-    var filled  = 0, missing = [];
-
-    function fieldName(t, code) {
-      var sec  = code[0].toLowerCase();
-      var num  = code.slice(1);
-      var qkey = sec + num;
-      if (t === 'm5' && sec === 'b') return 'submitted[' + qkey + '][select]';
-      if (t === 'm5') return 'submitted[' + sec + '.' + qkey + ']';
-      return 'submitted[danh_gia][' + sec + '][' + qkey + ']';
-    }
-
-    answers.forEach(function(a) {
-      if (!a.code || !a.value || parseInt(a.value) <= 0) return;
-      var val  = parseInt(a.value);
-      var name = fieldName(type, a.code);
-      var el;
-      if (type === 'm5' && a.code[0].toUpperCase() === 'B') {
-        el = document.querySelector('input[name="' + name + '[' + val + ']"]') ||
-             document.querySelector('input[name="' + name + '"][value="' + val + '"]');
-        if (el) { el.checked = true; filled++; }
-        else missing.push(a.code + '=' + val);
-      } else {
-        el = document.querySelector('input[name="' + name + '"][value="' + val + '"]');
-        if (el) {
-          el.checked = true;
-          el.dispatchEvent(new Event('change', {bubbles:true}));
-          filled++;
-        } else missing.push(a.code + '=' + val);
-      }
-    });
-
-    // ---- Điền thông tin bệnh viện ----
-    var bvSels = [
-      'input[name="submitted[ttp.bvn][1_ten_benh_vien]"]',
-      'input[name="submitted[thong_tin_phieu.benhvien_ngay][1_ten_benh_vien]"]'
-    ];
-    bvSels.forEach(function(s){var e=document.querySelector(s);if(e)e.value=${hvname};});
-
-    var khoaSels = [
-      'input[name="submitted[ttp.kmk][khoa_phong]"]',
-      'input[name="submitted[thong_tin_phieu.khoa_ma_khoa][khoa_phong]"]',
-      'select[name="submitted[ttp.khoa_phong]"]'
-    ];
-    khoaSels.forEach(function(s){var e=document.querySelector(s);if(e)e.value=${khoa};});
-
-    // Mã BV
-    var mabvSels = [
-      'input[name="submitted[ttp.bvn][mabv]"]',
-      'input[name="submitted[thong_tin_phieu.benhvien_ngay][mabv]"]'
-    ];
-    mabvSels.forEach(function(s){var e=document.querySelector(s);if(e)e.value=${mabv};});
-
-    // Ngày điền phiếu
-    var daySelectors = [
-      ['submitted[ttp.bvn][ngay_dien_phieu][day]',   ${dd}],
-      ['submitted[ttp.bvn][ngay_dien_phieu][month]', ${mm}],
-      ['submitted[ttp.bvn][ngay_dien_phieu][year]',  ${yy}],
-      ['submitted[thong_tin_phieu.benhvien_ngay][ngay_dien_phieu][day]',   ${dd}],
-      ['submitted[thong_tin_phieu.benhvien_ngay][ngay_dien_phieu][month]', ${mm}],
-      ['submitted[thong_tin_phieu.benhvien_ngay][ngay_dien_phieu][year]',  ${yy}]
-    ];
-    daySelectors.forEach(function(pair){
-      var e=document.querySelector('input[name="'+pair[0]+'"],select[name="'+pair[0]+'"]');
-      if(e)e.value=pair[1];
-    });
-
-    // Submit form
-    setTimeout(function(){
-      var btn = document.querySelector(
-        'input[type="submit"][name="op"],' +
-        'input[type="submit"].webform-submit,' +
-        'input[type="submit"].btn-primary,' +
-        'button[type="submit"]'
-      );
-      if (btn) btn.click();
-    }, 800);
-
-    return { ok: true, filled: filled, missing: missing.join(','), total: answers.length, buildId: buildId.substring(0,15) };
-  } catch(err) {
-    return { error: err.message };
-  }
-})()`);
-
-            if (result && result.error === 'NO_BUILD_ID') {
+        // Trang form đã load → điền và submit
+        if (ready && !fillDone) {
+          const hasForm = win.document.querySelector('form[id^="webform-client-form-"]') ||
+                          win.document.querySelector('form.webform-client-form');
+          if (!hasForm) {
+            if (attempts > 10) {
               clearInterval(iv);
               try { win.close(); } catch(x){}
-              resolve({ ok: false, msg: 'Không tìm thấy form_build_id – trang BYT có thể thay đổi' });
+              resolve({ ok: false, msg: 'Không tìm thấy form webform trên trang BYT' });
+            }
+            return;
+          }
+
+          fillDone = true;
+          addBYTLog('info', 'Trang form đã tải – đang điền dữ liệu...');
+
+          try {
+            const result = win.eval(injectScript);
+            if (result && result.error === 'NO_BUILD_ID') {
+              clearInterval(iv); try { win.close(); } catch(x){}
+              resolve({ ok: false, msg: 'Không tìm thấy form_build_id – trang BYT có thể thay đổi cấu trúc' });
               return;
             }
             if (result && result.error) {
-              addBYTLog('warn', 'Lỗi điền form: ' + result.error);
-            } else if (result && result.ok) {
-              addBYTLog('info', 'Điền ' + result.filled + '/' + result.total + ' câu (thiếu: ' + (result.missing||'không có') + ')');
+              clearInterval(iv); try { win.close(); } catch(x){}
+              resolve({ ok: false, msg: 'Lỗi điền form: ' + result.error });
+              return;
+            }
+            if (result && result.ok) {
+              addBYTLog('info',
+                'Đã điền ' + result.filled + '/' + result.total + ' câu' +
+                (result.missing ? ' | thiếu: ' + result.missing : '') +
+                ' | form_id: ' + (result.formId || '?'));
             }
 
-            // Chờ submit và redirect
+            // Chờ submit → xác nhận thành công
             let waitAtt = 0;
             const waitIv = setInterval(() => {
               waitAtt++;
               try {
                 if (win.closed) {
-                  clearInterval(waitIv);
-                  clearInterval(iv);
+                  clearInterval(waitIv); clearInterval(iv);
                   submitted = true;
                   resolve({ ok: true, msg: 'Đã gửi (cửa sổ tự đóng)' });
                   return;
                 }
-                const newUrl  = win.location.href || '';
-                const body    = win.document.body?.innerText || '';
-                const isOk    = body.includes('cảm ơn') || body.includes('Cảm ơn') ||
-                                body.includes('thành công') || body.includes('Thành công') ||
-                                newUrl.includes('confirmation') || newUrl.includes('complete') ||
-                                (newUrl !== pageUrl && newUrl.length > 10 && win.document.readyState === 'complete');
+                const newUrl = win.location.href || '';
+                const body   = (win.document.body || {}).innerText || '';
+                const isOk =
+                  /cảm ơn|Cảm ơn|thành công|Thành công|thank|Thank/i.test(body) ||
+                  /confirmation|complete/i.test(newUrl) ||
+                  (newUrl !== pageUrl && newUrl.length > 10 && win.document.readyState === 'complete' && !newUrl.includes('/user/login'));
                 if (isOk) {
-                  clearInterval(waitIv);
-                  clearInterval(iv);
+                  clearInterval(waitIv); clearInterval(iv);
                   submitted = true;
                   setTimeout(() => { try { win.close(); } catch(x){} }, 800);
                   resolve({ ok: true, msg: 'Gửi thành công' });
                 }
               } catch(ce) {
-                // Cross-origin sau submit → thành công
-                clearInterval(waitIv);
-                clearInterval(iv);
+                clearInterval(waitIv); clearInterval(iv);
                 submitted = true;
                 setTimeout(() => { try { win.close(); } catch(x){} }, 600);
                 resolve({ ok: true, msg: 'Gửi thành công (redirect sau submit)' });
               }
-              if (waitAtt > 15) {
-                clearInterval(waitIv);
-                clearInterval(iv);
+              if (waitAtt > 22) {
+                clearInterval(waitIv); clearInterval(iv);
                 submitted = true;
                 setTimeout(() => { try { win.close(); } catch(x){} }, 400);
                 resolve({ ok: true, msg: 'Gửi xong (timeout xác nhận)' });
@@ -506,16 +500,13 @@ function submitBYTViaPopup(rec) {
             }, 1000);
 
           } catch(domErr) {
-            // Cross-origin khi đọc DOM → chưa đăng nhập
-            clearInterval(iv);
-            try { win.close(); } catch(x){}
+            clearInterval(iv); try { win.close(); } catch(x){}
             resolve({ ok: false, msg: 'Không đọc được trang BYT – hãy đăng nhập BYT trước' });
           }
         }
 
       } catch(outerErr) {
-        // Cross-origin sau khi đã điền và submit
-        if (tokensDone && !submitted) {
+        if (fillDone && !submitted) {
           clearInterval(iv);
           submitted = true;
           setTimeout(() => { try { win.close(); } catch(x){} }, 400);
@@ -523,11 +514,11 @@ function submitBYTViaPopup(rec) {
         }
       }
 
-      if (attempts > 35) {
+      if (attempts > 80) {
         clearInterval(iv);
         if (!submitted) {
           try { win.close(); } catch(x){}
-          resolve({ ok: false, msg: 'Timeout 17 giây – trang BYT không phản hồi' });
+          resolve({ ok: false, msg: 'Timeout 40 giây – trang BYT không phản hồi' });
         }
       }
     }, 500);
@@ -556,7 +547,8 @@ function renderBYTQueue() {
       <div class="empty-text">Không có phiếu cần gửi</div>
       <div class="empty-sub">Tất cả phiếu đã được gửi hoặc chưa có phiếu nào</div>
     </div>`;
-    document.getElementById('byt-queue-count').textContent = '';
+    const cnt = document.getElementById('byt-queue-count');
+    if (cnt) cnt.textContent = '';
     return;
   }
 
@@ -567,16 +559,14 @@ function renderBYTQueue() {
     const avg  = ans.length ? (ans.reduce((s,a)=>s+a.value,0)/ans.length).toFixed(1) : '-';
     const d    = r.ngay || r.createdAt?.split('T')[0] || '';
     const icon = r.type==='m1'?'🏥':r.type==='m2'?'🏃':r.type==='m3'?'👨‍⚕️':r.type==='m4'?'👶':'🍼';
-
-    let statusHtml;
-    if (!r.bytStatus || r.bytStatus === 'pending')
-      statusHtml = '<span class="uqi-status pending">⏳ Chờ gửi</span>';
-    else if (r.bytStatus === 'uploading')
-      statusHtml = '<span class="uqi-status uploading">🔄 Đang gửi</span>';
-    else if (r.bytStatus === 'done')
-      statusHtml = '<span class="uqi-status done">✅ Đã gửi</span>';
-    else
-      statusHtml = '<span class="uqi-status failed">❌ Lỗi – thử lại</span>';
+    let statusHtml =
+      (!r.bytStatus || r.bytStatus==='pending')
+        ? '<span class="uqi-status pending">⏳ Chờ gửi</span>'
+        : r.bytStatus==='uploading'
+        ? '<span class="uqi-status uploading">🔄 Đang gửi</span>'
+        : r.bytStatus==='done'
+        ? '<span class="uqi-status done">✅ Đã gửi</span>'
+        : '<span class="uqi-status failed">❌ Lỗi – thử lại</span>';
 
     html += `<div class="upload-queue-item${isSelected?' selected':''}" id="uqi_${r.id}">
       <input type="checkbox" class="uqi-check" data-id="${r.id}" ${isSelected?'checked':''}
@@ -591,8 +581,8 @@ function renderBYTQueue() {
   });
 
   el.innerHTML = html;
-  document.getElementById('byt-queue-count').textContent =
-    `(${surveys.length} phiếu, đã chọn ${bytSelectedIds.size})`;
+  const cnt = document.getElementById('byt-queue-count');
+  if (cnt) cnt.textContent = `(${surveys.length} phiếu, đã chọn ${bytSelectedIds.size})`;
   updateBYTPendingBadge();
 }
 
@@ -601,14 +591,13 @@ function toggleBYTItem(id, checked) {
   else bytSelectedIds.delete(id);
   document.getElementById('uqi_' + id)?.classList.toggle('selected', checked);
   const total = document.querySelectorAll('.uqi-check').length;
-  const count = document.getElementById('byt-queue-count');
-  if (count) count.textContent = `(${total} phiếu, đã chọn ${bytSelectedIds.size})`;
+  const cnt   = document.getElementById('byt-queue-count');
+  if (cnt) cnt.textContent = `(${total} phiếu, đã chọn ${bytSelectedIds.size})`;
 }
 
 function selectAllBYTQueue() {
   document.querySelectorAll('.uqi-check').forEach(cb => {
-    cb.checked = true;
-    bytSelectedIds.add(cb.dataset.id);
+    cb.checked = true; bytSelectedIds.add(cb.dataset.id);
     document.getElementById('uqi_' + cb.dataset.id)?.classList.add('selected');
   });
   renderBYTQueue();
@@ -619,8 +608,8 @@ function deselectAllBYTQueue() {
   document.querySelectorAll('.uqi-check').forEach(cb => { cb.checked = false; });
   document.querySelectorAll('.upload-queue-item').forEach(el => el.classList.remove('selected'));
   const total = document.querySelectorAll('.uqi-check').length;
-  const count = document.getElementById('byt-queue-count');
-  if (count) count.textContent = `(${total} phiếu, đã chọn 0)`;
+  const cnt   = document.getElementById('byt-queue-count');
+  if (cnt) cnt.textContent = `(${total} phiếu, đã chọn 0)`;
 }
 
 function quickSendOneBYT(id) {
@@ -633,7 +622,7 @@ function quickSendOneBYT(id) {
 function openBYTForRecord(id) {
   const r = DB.surveys.find(x => x.id === id);
   if (!r) return;
-  const url = SURVEYS[r.type]?.url || BYT_BASE;
+  const url = BYT_FORM_ACTIONS[r.type] ? (BYT_BASE + BYT_FORM_ACTIONS[r.type]) : BYT_BASE;
   if (!window.open(url, '_blank'))
     toast('❌ Popup bị chặn. Vui lòng cho phép popup.', 'error');
 }
@@ -657,24 +646,25 @@ async function sendSelectedToBYT() {
   addBYTLog('info', '═══ Bắt đầu gửi ' + bytSelectedIds.size + ' phiếu lên BYT ═══');
   addBYTLog('info', 'Thời gian: ' + new Date().toLocaleString('vi-VN'));
   addBYTLog('info', 'Tài khoản BYT: ' + CFG.bytuser);
-  addBYTLog('info', '⚠️ Lưu ý: mỗi phiếu sẽ mở cửa sổ BYT riêng. KHÔNG đóng cửa sổ đó khi đang gửi!');
+  addBYTLog('info', '⚠️ Mỗi phiếu sẽ mở 1 cửa sổ BYT riêng – KHÔNG đóng cửa sổ khi đang gửi!');
 
   const ids = [...bytSelectedIds];
   let successCount = 0, failCount = 0, needLogin = false;
 
-  for (const id of ids) {
-    const r = DB.surveys.find(x => x.id === id);
+  for (let i = 0; i < ids.length; i++) {
+    if (needLogin) break;
+    const id = ids[i];
+    const r  = DB.surveys.find(x => x.id === id);
     if (!r) continue;
 
-    const ans = r.answers?.filter(a => a.value && parseInt(a.value) > 0) || [];
+    const ans   = r.answers?.filter(a => a.value && parseInt(a.value) > 0) || [];
     const label = (SURVEYS[r.type]?.label||r.type) +
-      ' | ' + (r.ngay||r.createdAt?.split('T')[0]||'') +
-      ' | ' + (r.khoa||r.donvi||'—') +
-      ' | ' + ans.length + ' câu';
+                  ' | ' + (r.ngay||r.createdAt?.split('T')[0]||'') +
+                  ' | ' + (r.khoa||r.donvi||'—') +
+                  ' | ' + ans.length + ' câu';
 
-    addBYTLog('info', '▶ Gửi: ' + label);
+    addBYTLog('info', '▶ [' + (i+1) + '/' + ids.length + '] Gửi: ' + label);
 
-    // UI uploading
     r.bytStatus = 'uploading'; saveDB();
     const itemEl = document.getElementById('uqi_' + id);
     if (itemEl) {
@@ -683,42 +673,37 @@ async function sendSelectedToBYT() {
     }
 
     let result;
-    try {
-      result = await submitBYTViaPopup(r);
-    } catch(e) {
-      result = { ok: false, msg: e.message };
-    }
+    try { result = await submitBYTViaPopup(r); }
+    catch(e) { result = { ok: false, msg: e.message }; }
 
     if (result.ok) {
-      r.bytStatus = 'done';
-      successCount++;
+      r.bytStatus = 'done'; successCount++;
       bytSelectedIds.delete(id);
       addBYTLog('ok', '✅ Thành công: ' + label);
       if (itemEl) {
         const s = itemEl.querySelector('.uqi-status');
         if (s) { s.className='uqi-status done'; s.textContent='✅ Đã gửi'; }
       }
-      // Cập nhật Sheets nền
-      if (gsReady()) gsUpdateSurveyStatus(id, 'done').catch(()=>{});
+      if (typeof gsReady === 'function' && gsReady())
+        gsUpdateSurveyStatus(id, 'done').catch(()=>{});
     } else {
-      r.bytStatus = 'failed';
-      failCount++;
-      addBYTLog('err', '❌ Thất bại: ' + label + ' – ' + result.msg);
-      if (itemEl) {
-        const s = itemEl.querySelector('.uqi-status');
-        if (s) { s.className='uqi-status failed'; s.textContent='❌ Lỗi'; }
-      }
-      if (result.msg === 'CHƯA_ĐĂNG_NHẬP' || result.msg?.includes('CHƯA_ĐĂNG_NHẬP')) {
+      const isNoLogin = (result.msg||'').includes('CHƯA_ĐĂNG_NHẬP');
+      if (isNoLogin) {
+        r.bytStatus = 'pending'; // reset để gửi lại sau
         needLogin = true;
-        addBYTLog('warn', '⛔ Phiên BYT hết hạn – dừng gửi. Hãy đăng nhập lại.');
-        break;
+        addBYTLog('warn', '⛔ Phiên BYT hết hạn! Dừng gửi. Hãy đăng nhập lại và gửi tiếp.');
+      } else {
+        r.bytStatus = 'failed'; failCount++;
+        addBYTLog('err', '❌ Thất bại [' + (result.msg||'unknown') + ']: ' + label);
+        if (itemEl) {
+          const s = itemEl.querySelector('.uqi-status');
+          if (s) { s.className='uqi-status failed'; s.textContent='❌ Lỗi'; }
+        }
       }
     }
-
     saveDB(); updateDash();
 
-    if (needLogin) break;
-    if (ids.indexOf(id) < ids.length - 1) {
+    if (!needLogin && i < ids.length - 1) {
       addBYTLog('info', '⏳ Chờ 3 giây...');
       await sleep(3000);
     }
@@ -728,21 +713,37 @@ async function sendSelectedToBYT() {
   addBYTLog('info', '═══ Kết quả: ✅ ' + successCount + ' thành công | ❌ ' + failCount + ' thất bại ═══');
 
   if (needLogin) {
-    toast('⚠️ Phiên BYT hết hạn! Nhấn "Đăng nhập BYT" rồi gửi lại.', 'warning');
     setBYTStatusUI('logged-out', '⚠️ Phiên BYT hết hạn. Nhấn "Đăng nhập BYT" để tiếp tục.');
     const lb = document.getElementById('btn-byt-login-now');
     if (lb) lb.style.display = '';
+    toast('⚠️ Phiên BYT hết hạn! Nhấn "Đăng nhập BYT" rồi gửi lại.', 'warning');
   } else {
     toast('📤 BYT: ' + successCount + ' ✅ thành công, ' + failCount + ' ❌ thất bại',
       successCount > 0 ? 'success' : 'error');
+    if (successCount > 0)
+      setBYTStatusUI('logged-in', '✅ Gửi BYT hoàn tất: ' + successCount + ' phiếu thành công.');
   }
 
   renderBYTQueue();
   updateBYTPendingBadge();
-  if (gsReady()) {
-    gsLogHistory('byt_upload',
-      'Gửi BYT: ' + successCount + ' thành công / ' + failCount + ' thất bại').catch(()=>{});
+  if (typeof gsReady === 'function' && gsReady()) {
+    gsLogHistory('byt_upload', 'Gửi BYT: '+successCount+' thành công / '+failCount+' thất bại').catch(()=>{});
   }
+}
+
+// =========================================================
+// TỰ ĐỘNG GỬI KHI LƯU PHIẾU (nếu bật autoUploadBYT)
+// =========================================================
+async function autoUploadBYTIfEnabled(id) {
+  if (!CFG.autoUploadBYT) return;
+  if (!CFG.bytuser || !CFG.bytpass) return;
+  if (bytLoginStatus !== 'logged-in') return;
+  if (bytUploadRunning) return;
+  const r = DB.surveys.find(x => x.id === id);
+  if (!r || r.bytStatus === 'done') return;
+  addBYTLog('info', '🤖 Tự động gửi phiếu vừa lưu: ' + id);
+  bytSelectedIds.add(id);
+  await sendSelectedToBYT();
 }
 
 // =========================================================
@@ -765,4 +766,32 @@ function clearBYTLog() {
   bytLog = [];
 }
 
+function exportBYTLog() {
+  if (!bytLog.length) { toast('Chưa có log để xuất', 'info'); return; }
+  const txt  = bytLog.map(l => `[${l.ts}] [${l.type.toUpperCase()}] ${l.msg}`).join('\n');
+  const blob = new Blob([txt], { type: 'text/plain; charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = 'byt_log_' + new Date().toISOString().replace(/[:.]/g, '-') + '.txt';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// =========================================================
+// FIELD NAME HELPER (debug / external use)
+// =========================================================
+function bytFieldName(type, code) {
+  if (!code) return null;
+  const sec  = code[0].toLowerCase();
+  const num  = code.slice(1).toLowerCase();
+  const qkey = sec + num;
+  if (type === 'm5') {
+    const RADIO_SINGLE = {b5:1,b6:1,b8:1,b11:1};
+    if (RADIO_SINGLE[qkey]) return 'submitted[danh_gia]['+qkey+'][select]';
+    return 'submitted[danh_gia]['+qkey+'][select][VALUE]';
+  }
+  return 'submitted[danh_gia]['+sec+']['+qkey+']';
+}
