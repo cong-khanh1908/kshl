@@ -385,6 +385,7 @@
             <span class="byt-status-dot orange" id="byt-dot"></span>
             <span id="byt-login-msg">Nhấn "Kiểm tra" để xác minh trạng thái đăng nhập trang BYT...</span>
           </div>
+          <div id="byt-cfg-status-upload" style="font-size:12px;padding:8px 12px;margin-bottom:10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);">⏳ Đang kiểm tra cấu hình...</div>
           <div class="warn-box" style="font-size:12px;">
             ⚠️ <b>Cách hoạt động:</b> Hệ thống mở trang BYT trong tab mới, kiểm tra trạng thái đăng nhập. Nếu chưa đăng nhập sẽ tự động điền tài khoản BYT đã cấu hình để đăng nhập trước khi gửi phiếu.<br>
             <b>Yêu cầu:</b> Tài khoản BYT phải được cấu hình tại <a href="#" onclick="showPage('settings');return false" style="color:var(--primary)">Cấu hình hệ thống</a>. Trình duyệt cần cho phép mở tab mới.
@@ -703,6 +704,30 @@
             <div class="settings-sec-title">Tài khoản BYT (hailong.chatluongbenhvien.vn)</div>
             <div class="form-group mb-14"><label class="form-label">Tên đăng nhập</label><input type="text" class="form-input" id="cfg-bytuser" placeholder="username..."/></div>
             <div class="form-group mb-14"><label class="form-label">Mật khẩu</label><input type="password" class="form-input" id="cfg-bytpass" placeholder="••••••••"/><div style="font-size:10px;color:#E65100;margin-top:2px;">⚠️ Mã hoá và lưu trên Sheets</div></div>
+            <div class="form-group mb-14"><label class="form-label">Mã BV trong select BYT (mabv) <span style="color:var(--accent2);font-size:10px;">★ BẮT BUỘC – BUG-05 FIX</span></label><input type="text" class="form-input" id="cfg-mabv" placeholder="VD: 62310"/><div style="font-size:10px;color:var(--accent2);margin-top:2px;">⚠️ QUAN TRỌNG: Đây là giá trị <b>value</b> (mã số) của option trong dropdown "Tên bệnh viện" trên trang BYT, <b>không phải tên BV</b>. Xem page source → tìm select[name="submitted[ttp][bvn][1_ten_benh_vien]"] → lấy value. Bắt buộc phải có để gửi phiếu thành công.</div></div>
+            <div class="form-group mb-14"><label class="form-label">ID bệnh viện trong select BYT (bvid)</label><input type="text" class="form-input" id="cfg-bvid" placeholder="VD: 62310"/><div style="font-size:10px;color:var(--text3);margin-top:2px;">Giá trị option value của BV trong dropdown &lt;select&gt; trên trang BYT (thường là số, xem trang noi_tru.html để lấy)</div></div>
+            <div class="form-group mb-14"><label class="form-label">ID khoa/phòng trong select BYT (khoaId) <span style="color:var(--accent2);font-size:10px;">⚠️ BUG-06 FIX</span></label><input type="text" class="form-input" id="cfg-khoaid" placeholder="VD: 123163"/><div style="font-size:10px;color:var(--text3);margin-top:2px;">Mã số khoa trong dropdown &lt;select name="submitted[ttp][kmk][khoa_phong]"&gt; – xem page source trang BYT để lấy đúng value. Nếu để trống, trường khoa sẽ bỏ qua (không bắt buộc).</div></div>
+            <div class="form-group mb-14"><label class="form-label">Kiểu khảo sát mặc định</label>
+              <select class="form-select" id="cfg-byt-kieu">
+                <option value="1">1. Bệnh viện tự đánh giá hàng tháng/quý</option>
+                <option value="2">2. Bệnh viện tự đánh giá cuối năm</option>
+                <option value="3">3. Do đoàn Bộ Y tế/Sở Y tế thực hiện</option>
+                <option value="4">4. Do đoàn phúc tra của BYT thực hiện</option>
+                <option value="5">5. Do đoàn kiểm tra chéo</option>
+                <option value="6">6. Hình thức khác</option>
+              </select>
+            </div>
+            <div class="form-group mb-14"><label class="form-label">Người phỏng vấn/điền phiếu mặc định</label>
+              <select class="form-select" id="cfg-byt-nguoipv">
+                <option value="1">a. Người bệnh tự điền (hoặc người nhà)</option>
+                <option value="2">b. Nhân viên của bệnh viện</option>
+                <option value="3">c. Bộ Y tế/Sở Y tế hoặc đoàn giám sát</option>
+                <option value="4">d. Tổ chức độc lập</option>
+                <option value="5">e. Đối tượng khác</option>
+              </select>
+            </div>
+            <div class="form-group mb-14"><label class="form-label">Tên/Mã người điền (nguoiks – tuỳ chọn)</label><input type="text" class="form-input" id="cfg-byt-nguoiks" placeholder="VD: Phòng QLCL"/></div>
+            <div id="byt-cfg-status" style="font-size:12px;margin-top:4px;"></div>
             <div class="divider"></div>
             <div class="settings-sec-title">Tự động gửi phiếu lên BYT</div>
             <div class="form-group mb-14" style="flex-direction:row;align-items:center;gap:10px;">

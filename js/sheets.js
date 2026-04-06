@@ -1,619 +1,738 @@
-// sheets.js – Google Sheets Service Account Integration
-// KSHL v6.1 – Fixed & Complete
+// sheets.js – Google Sheets engine, đồng bộ dữ liệu, cấu hình, lịch sử
+// Thuộc dự án Khảo sát Hài lòng – QĐ 56/2024 & QĐ 3869/2019
 // ============================================================
 
-const GS_SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
-let _gsToken = null;
-let _gsTokenExp = 0;
-let _gsReady = false;
-
 // =========================================================
-// TOKEN (JWT + SA)
+// GOOGLE SHEETS
 // =========================================================
-async function gsGetToken() {
-  if (_gsToken && Date.now() < _gsTokenExp - 60000) return _gsToken;
-
-  if (!CFG.saEmail || !CFG.saKey) throw new Error('Chưa cấu hình Service Account');
-  if (!CFG.sheetId) throw new Error('Chưa cấu hình Spreadsheet ID');
-
-  try {
-    const now = Math.floor(Date.now() / 1000);
-    const header  = btoa(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
-    const payload = btoa(JSON.stringify({
-      iss: CFG.saEmail,
-      scope: GS_SCOPES.join(' '),
-      aud: 'https://oauth2.googleapis.com/token',
-      exp: now + 3600,
-      iat: now
-    })).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
-
-    const sigInput = header + '.' + payload;
-
-    // Import private key
-    const keyData = CFG.saKey
-      .replace(/-----BEGIN PRIVATE KEY-----/g, '')
-      .replace(/-----END PRIVATE KEY-----/g, '')
-      .replace(/\s/g, '');
-    const keyBuf = Uint8Array.from(atob(keyData), c => c.charCodeAt(0));
-    const cryptoKey = await crypto.subtle.importKey(
-      'pkcs8', keyBuf.buffer,
-      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-      false, ['sign']
-    );
-
-    const sig = await crypto.subtle.sign(
-      'RSASSA-PKCS1-v1_5', cryptoKey,
-      new TextEncoder().encode(sigInput)
-    );
-    const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
-    const jwt = sigInput + '.' + sigB64;
-
-    const resp = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
-    });
-    if (!resp.ok) {
-      const err = await resp.text();
-      throw new Error('Token error: ' + err.slice(0, 200));
-    }
-    const data = await resp.json();
-    _gsToken = data.access_token;
-    _gsTokenExp = Date.now() + (data.expires_in || 3600) * 1000;
-    _gsReady = true;
-    return _gsToken;
-  } catch(e) {
-    _gsReady = false;
-    throw e;
+async function syncToSheets(showMsg=true){
+  if(!gsReady()){if(showMsg)toast('Chưa cấu hình Google Sheets','warning');return;}
+  const pending=DB.surveys.filter(x=>x.status==='pending');
+  if(!pending.length){if(showMsg)toast('Không có phiếu cần đồng bộ','info');return;}
+  if(showMsg)toast(`Đang đồng bộ ${pending.length} phiếu...`,'info');
+  let ok=0;
+  for(const r of pending){
+    const success=await gsPushOneSurvey(r);
+    if(success){r.status='synced';ok++;}
   }
+  saveDB();updateDash();
+  if(showMsg)toast(`✅ Đồng bộ ${ok}/${pending.length} phiếu`,ok===pending.length?'success':'warning');
 }
-
-function gsReady() {
-  return !!(CFG.sheetId && CFG.saEmail && CFG.saKey);
-}
+async function autoSync(){if(navigator.onLine&&gsReady()&&DB.surveys.some(x=>x.status==='pending'))await syncToSheets(false);}
 
 // =========================================================
-// CORE API
+// AUTOFILL
 // =========================================================
-async function gsRead(range) {
-  const token = await gsGetToken();
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CFG.sheetId}/values/${encodeURIComponent(range)}`;
-  const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error('Sheets read error: ' + err.slice(0,200));
-  }
-  const data = await resp.json();
-  return data.values || [];
-}
-
-async function gsWrite(range, values) {
-  const token = await gsGetToken();
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CFG.sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
-  const resp = await fetch(url, {
-    method: 'PUT',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ range, majorDimension: 'ROWS', values })
+function loadAFList(){
+  const type=document.getElementById('af-type').value,sel=document.getElementById('af-record');
+  sel.innerHTML='<option value="">--Chọn phiếu--</option>';
+  if(!type)return;
+  DB.surveys.filter(x=>x.type===type).slice().reverse().forEach(r=>{
+    const d=r.ngay||r.createdAt?.split('T')[0]||'',ans=r.answers?.filter(a=>a.value!==null).length||0;
+    sel.innerHTML+=`<option value="${r.id}">${d} – ${r.khoa||r.donvi||''} (${ans}/${r.answers?.length||0})</option>`;
   });
-  if (!resp.ok) throw new Error('Sheets write error: ' + (await resp.text()).slice(0,200));
-  return await resp.json();
 }
-
-async function gsAppend(range, values) {
-  const token = await gsGetToken();
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CFG.sheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ range, majorDimension: 'ROWS', values })
-  });
-  if (!resp.ok) throw new Error('Sheets append error: ' + (await resp.text()).slice(0,200));
-  return await resp.json();
+function genScript(){
+  const id=document.getElementById('af-record').value;if(!id){toast('Chọn phiếu trước','warning');return;}
+  const r=DB.surveys.find(x=>x.id===id);if(!r)return;
+  const script=`// Auto-fill: ${SURVEYS[r.type]?.label} | ${r.ngay||r.createdAt?.split('T')[0]} | CHỈ dùng trên hailong.chatluongbenhvien.vn
+(function(){
+  const answers=${JSON.stringify((r.answers||[]).map(a=>({code:a.code,q:a.question.substring(0,35),v:a.value})))};
+  function fill(idx,val){if(!val||val===0)return;const gs=document.querySelectorAll('.webform-component-radios,.form-type-radios,[class*="question-group"]');const g=gs[idx];if(!g)return;g.querySelectorAll('input[type="radio"]').forEach(r=>{if(parseInt(r.value)===val){r.checked=true;r.dispatchEvent(new Event('change',{bubbles:true}));}});}
+  let n=0;answers.forEach((a,i)=>{if(a.v&&a.v>0){fill(i,a.v);n++;}});
+  console.group('📋 ${SURVEYS[r.type]?.label}');answers.forEach(a=>console.log(a.code+':',a.v||'—','|',a.q));console.groupEnd();
+  alert('✅ Điền '+n+'/'+answers.length+' câu.\\n⚠️ Kiểm tra trước khi nhấn Gửi!');
+})();`;
+  const out=document.getElementById('script-out');
+  out.innerHTML=`<button class="code-copy-btn" onclick="copyScript()">📋 Copy</button><pre style="white-space:pre-wrap;margin-top:5px;font-size:10.5px;">${script.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+  out.dataset.raw=script;document.getElementById('script-section').style.display='';toast('Script tạo xong!','success');
 }
-
-async function gsBatchUpdate(requests) {
-  const token = await gsGetToken();
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CFG.sheetId}:batchUpdate`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ requests })
-  });
-  if (!resp.ok) throw new Error('Sheets batchUpdate error: ' + (await resp.text()).slice(0,200));
-  return await resp.json();
-}
-
-async function gsGetSheetMeta() {
-  const token = await gsGetToken();
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${CFG.sheetId}?fields=sheets.properties`;
-  const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
-  if (!resp.ok) throw new Error('Cannot get spreadsheet meta');
-  return await resp.json();
+function copyScript(){navigator.clipboard.writeText(document.getElementById('script-out').dataset.raw).then(()=>toast('✅ Đã copy!','success'));}
+function openBYT(){const type=document.getElementById('af-type').value;window.open(type?SURVEYS[type]?.url:'https://hailong.chatluongbenhvien.vn/user/login','_blank');}
+function renderBYTLinks(){
+  const links=Object.entries(SURVEYS).map(([k,v])=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--surface2);"><span style="font-size:12.5px;font-weight:500;flex:1">${v.label}</span><a href="${v.url}" target="_blank" class="btn btn-outline btn-xs">Mở →</a></div>`).join('');
+  const el=document.getElementById('byt-links');if(el)el.innerHTML=links;
 }
 
 // =========================================================
-// INIT SHEETS STRUCTURE
+// SETTINGS
 // =========================================================
-async function gsInitSheets() {
-  showGsSyncStatus('🏗️ Đang tạo cấu trúc Sheets...');
+function saveCfgSheets(){
+  CFG.sheetid   = document.getElementById('cfg-sheetid').value.trim();
+  const saEmail = (document.getElementById('cfg-sa-email')?.value||'').trim();
+  const saKey   = (document.getElementById('cfg-sa-key')?.value||'').trim();
+  if (saEmail) CFG.sa_email = saEmail;
+  if (saKey)   CFG.sa_key   = saKey;
+  if (!CFG.sa_email) CFG.sa_email = SA_DEFAULT.sa_email;
+  if (!CFG.sa_key)   CFG.sa_key   = SA_DEFAULT.sa_key;
+  CFG.sheetname = document.getElementById('cfg-sheetname').value.trim() || 'SURVEYS';
+  _gsToken = null; _gsTokenExp = 0;
+  saveCFG();
+  if (!CFG.sheetid) { toast('⚠️ Vui lòng nhập Spreadsheet ID', 'warning'); return; }
+  loadCfgToUI();
+  refreshShareLink();
+  toast('✅ Đã lưu – đang kiểm tra kết nối...', 'success');
+  setTimeout(() => testSheets(), 400);
+}
+
+function parseSAJson() {
+  const raw = document.getElementById('cfg-sa-json-paste').value.trim();
+  if (!raw) { toast('Dán nội dung JSON key vào ô trước', 'warning'); return; }
   try {
-    const meta = await gsGetSheetMeta();
-    const existing = (meta.sheets || []).map(s => s.properties.title);
-    const required = ['CONFIG', 'SURVEYS', 'USERS', 'DEPTS', 'HISTORY'];
-    const toCreate = required.filter(t => !existing.includes(t));
-
-    if (toCreate.length > 0) {
-      const requests = toCreate.map(title => ({
-        addSheet: { properties: { title } }
-      }));
-      await gsBatchUpdate(requests);
-    }
-
-    // Write headers
-    const surveySheetName = CFG.sheetName || 'SURVEYS';
-    const headers = [['id','type','ngay','khoa','donvi','khoaId','doituong','gioi_tinh','tuoi','nguoipv','kieuKhaoSat','baohiem','status','bytStatus','createdAt','answers_json','meta_json']];
-    await gsWrite(`${surveySheetName}!A1:Q1`, headers);
-    await gsWrite('CONFIG!A1:B1', [['key','value']]);
-    await gsWrite('USERS!A1:F1', [['id','username','fullname','role','dept','pwHash']]);
-    await gsWrite('DEPTS!A1:D1', [['id','name','code','type']]);
-    await gsWrite('HISTORY!A1:E1', [['timestamp','user','action','detail','device']]);
-
-    showGsSyncStatus('✅ Đã tạo cấu trúc Sheets thành công!');
-    toast('✅ Tạo cấu trúc Sheets thành công!', 'success');
-  } catch(e) {
-    showGsSyncStatus('❌ Lỗi: ' + e.message);
-    toast('❌ Lỗi tạo Sheets: ' + e.message, 'error');
-    console.error('gsInitSheets error:', e);
-  }
+    const j = JSON.parse(raw);
+    if (j.type !== 'service_account') { toast('❌ File JSON không phải Service Account', 'error'); return; }
+    if (!j.client_email || !j.private_key) { toast('❌ JSON thiếu client_email hoặc private_key', 'error'); return; }
+    document.getElementById('cfg-sa-email').value = j.client_email;
+    document.getElementById('cfg-sa-key').value = j.private_key.replace(/\\n/g, '\n');
+    document.getElementById('cfg-sa-json-paste').value = '';
+    toast(`✅ Đã điền email và Private Key. Nhấn "Lưu" để áp dụng.`, 'success');
+  } catch(e) { toast('❌ JSON không hợp lệ: ' + e.message, 'error'); }
 }
 
-// =========================================================
-// CONFIG sync
-// =========================================================
-async function gsSaveConfig() {
-  try {
-    const rows = Object.entries(CFG).map(([k,v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)]);
-    await gsWrite('CONFIG!A2', rows);
-  } catch(e) {
-    console.warn('gsSaveConfig error:', e);
-  }
-}
-
-async function gsLoadConfig() {
-  try {
-    const rows = await gsRead('CONFIG!A2:B200');
-    rows.forEach(([k, v]) => {
-      if (k && CFG.hasOwnProperty(k)) {
-        try { CFG[k] = JSON.parse(v); }
-        catch(e) { CFG[k] = v; }
-      }
-    });
-    saveCFG();
-  } catch(e) {
-    console.warn('gsLoadConfig error:', e);
-  }
-}
-
-// =========================================================
-// SURVEYS sync
-// =========================================================
-function surveyToRow(r) {
-  const answers = r.answers || [];
-  return [
-    r.id, r.type,
-    r.ngay || '', r.khoa || '', r.donvi || '', r.khoaId || '',
-    r.doituong || '', r.gioi_tinh || '', r.tuoi || '',
-    r.nguoipv || '', r.kieuKhaoSat || '',
-    r.baohiem || '',
-    r.status || 'pending',
-    r.bytStatus || 'pending',
-    r.createdAt || new Date().toISOString(),
-    JSON.stringify(answers),
-    JSON.stringify({ masophieu: r.masophieu || '', meta: r.meta || {} })
-  ];
-}
-
-function rowToSurvey(row) {
-  if (!row || !row[0]) return null;
-  let answers = [];
-  let meta = {};
-  try { answers = JSON.parse(row[15] || '[]'); } catch(e){}
-  try { meta = JSON.parse(row[16] || '{}'); } catch(e){}
-  return {
-    id: row[0], type: row[1],
-    ngay: row[2], khoa: row[3], donvi: row[4], khoaId: row[5] || '',
-    doituong: row[6] || '', gioi_tinh: row[7] || '', tuoi: row[8] || '',
-    nguoipv: row[9] || '', kieuKhaoSat: row[10] || '1',
-    baohiem: row[11] || '',
-    status: row[12] || 'synced',
-    bytStatus: row[13] || 'pending',
-    createdAt: row[14] || new Date().toISOString(),
-    answers,
-    masophieu: meta.masophieu || '',
-    meta: meta.meta || {}
-  };
-}
-
-async function gsPushSurvey(record) {
-  const sheetName = CFG.sheetName || 'SURVEYS';
-  await gsAppend(`${sheetName}!A:Q`, [surveyToRow(record)]);
-  record.status = 'synced';
-  saveDB();
-}
-
-async function gsPushAllData(showMsg = false) {
-  if (!gsReady()) {
-    if (showMsg) toast('⚠️ Chưa cấu hình Google Sheets', 'warning');
+async function testSheets(){
+  const el = document.getElementById('cfg-sheets-status');
+  el.textContent = '🔄 Đang kiểm tra kết nối...';
+  // Save current values first
+  const sheetid  = document.getElementById('cfg-sheetid').value.trim();
+  const sa_email = (document.getElementById('cfg-sa-email')?.value||'').trim();
+  const sa_key   = (document.getElementById('cfg-sa-key')?.value||'').trim();
+  if (!sheetid || !sa_email || !sa_key) {
+    el.innerHTML = '<span style="color:var(--accent2)">❌ Vui lòng điền đủ thông tin trước khi kiểm tra</span>';
     return;
   }
-  if (showMsg) showGsSyncStatus('⬆️ Đang đẩy tất cả dữ liệu lên Sheets...');
+  // Temporarily set to test
+  const prev = { sheetid:CFG.sheetid, sa_email:CFG.sa_email, sa_key:CFG.sa_key };
+  CFG.sheetid = sheetid; CFG.sa_email = sa_email; CFG.sa_key = sa_key;
+  _gsToken = null; _gsTokenExp = 0;
   try {
-    const sheetName = CFG.sheetName || 'SURVEYS';
-    const rows = DB.surveys.map(surveyToRow);
-    if (rows.length === 0) {
-      if (showMsg) { showGsSyncStatus('ℹ️ Không có dữ liệu để đẩy'); toast('ℹ️ Không có dữ liệu để đẩy', 'info'); }
-      return;
-    }
-    await gsWrite(`${sheetName}!A2`, rows);
-    DB.surveys.forEach(r => r.status = 'synced');
-    saveDB(); updateDash();
-    if (showMsg) { showGsSyncStatus(`✅ Đã đẩy ${rows.length} phiếu lên Sheets`); toast(`✅ Đã đẩy ${rows.length} phiếu`, 'success'); }
-  } catch(e) {
-    if (showMsg) { showGsSyncStatus('❌ Lỗi: ' + e.message); toast('❌ ' + e.message, 'error'); }
-    console.error('gsPushAllData error:', e);
-  }
-}
-
-async function gsPullAllData(showMsg = false) {
-  if (!gsReady()) {
-    if (showMsg) toast('⚠️ Chưa cấu hình Google Sheets', 'warning');
-    return;
-  }
-  if (showMsg) showGsSyncStatus('⬇️ Đang kéo dữ liệu từ Sheets...');
-  try {
-    const sheetName = CFG.sheetName || 'SURVEYS';
-    const rows = await gsRead(`${sheetName}!A2:Q5000`);
-    const surveys = rows.map(rowToSurvey).filter(Boolean);
-    DB.surveys = surveys;
-    saveDB(); updateDash(); renderList(); renderBYTQueue();
-    if (showMsg) { showGsSyncStatus(`✅ Đã kéo ${surveys.length} phiếu từ Sheets`); toast(`✅ Kéo ${surveys.length} phiếu`, 'success'); }
-  } catch(e) {
-    if (showMsg) { showGsSyncStatus('❌ Lỗi: ' + e.message); toast('❌ ' + e.message, 'error'); }
-    console.error('gsPullAllData error:', e);
-  }
-}
-
-async function syncToSheets() {
-  if (!gsReady()) { toast('⚠️ Chưa cấu hình Google Sheets', 'warning'); return; }
-  const pending = DB.surveys.filter(r => r.status !== 'synced');
-  if (pending.length === 0) { toast('ℹ️ Không có phiếu nào cần đồng bộ', 'info'); return; }
-
-  showGsSyncStatus(`🔄 Đang đồng bộ ${pending.length} phiếu...`);
-  let ok = 0, fail = 0;
-  for (const r of pending) {
-    try {
-      await gsPushSurvey(r);
-      ok++;
-    } catch(e) {
-      fail++;
-      console.warn('Sync failed for', r.id, e);
-    }
-  }
-  updateDash();
-  showGsSyncStatus(`✅ Đồng bộ xong: ${ok} thành công, ${fail} lỗi`);
-  toast(`🔄 Đồng bộ: ${ok} ✅ / ${fail} ❌`, ok > 0 ? 'success' : 'error');
-  await gsLogHistory('sync', `Đồng bộ ${ok} phiếu thành công, ${fail} lỗi`);
-}
-
-async function gsUpdateSurveyStatus(id, bytStatus) {
-  // Find row in sheet and update bytStatus column (column N = index 13)
-  // For simplicity, we push full record update
-  const record = DB.surveys.find(r => r.id === id);
-  if (!record) return;
-  try {
-    const sheetName = CFG.sheetName || 'SURVEYS';
-    const rows = await gsRead(`${sheetName}!A2:A5000`);
-    const rowIdx = rows.findIndex(r => r[0] === id);
-    if (rowIdx >= 0) {
-      const cellRow = rowIdx + 2;
-      await gsWrite(`${sheetName}!N${cellRow}`, [[bytStatus]]);
+    const token = await gsGetToken();
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetid}?fields=properties.title,sheets.properties.title`, {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    const d = await res.json();
+    if (d.properties) {
+      const tabs = (d.sheets||[]).map(s=>s.properties.title);
+      const needed = ['CONFIG','SURVEYS','USERS','DEPTS','HISTORY','REQUESTS'];
+      const missing = needed.filter(t=>!tabs.includes(t));
+      el.innerHTML = `<span style="color:var(--success)">✅ Kết nối thành công: <b>${d.properties.title}</b><br>Tabs hiện có: ${tabs.join(', ')||'(trống)'}${missing.length?`<br><span style="color:var(--warning)">⚠️ Thiếu tabs: ${missing.join(', ')} → Nhấn "Tạo cấu trúc Sheets"</span>`:'<br>✅ Đủ cấu trúc 5 tabs'}</span>`;
+      updateGSConnBadge(true);
+      saveCFG();
+    } else {
+      el.innerHTML = `<span style="color:var(--accent2)">❌ ${d.error?.message||'Không đọc được Spreadsheet'}</span>`;
+      Object.assign(CFG, prev);
     }
   } catch(e) {
-    console.warn('gsUpdateSurveyStatus error:', e);
+    el.innerHTML = `<span style="color:var(--accent2)">❌ ${e.message}</span>`;
+    Object.assign(CFG, prev);
+    updateGSConnBadge(false);
   }
 }
-
-// =========================================================
-// USERS sync
-// =========================================================
-async function gsLoadUsers() {
-  try {
-    const rows = await gsRead('USERS!A2:F500');
-    return rows.map(r => ({
-      id: r[0], username: r[1], fullname: r[2],
-      role: r[3] || 'user', dept: r[4] || '', pwHash: r[5] || ''
-    })).filter(u => u.id && u.username);
-  } catch(e) {
-    console.warn('gsLoadUsers error:', e);
-    return [];
+function saveCfgAll(){
+  CFG.hvname   = document.getElementById('cfg-hvname').value.trim();
+  CFG.province = document.getElementById('cfg-province').value.trim();
+  CFG.hang     = document.getElementById('cfg-hang').value;
+  CFG.bytuser          = document.getElementById('cfg-bytuser').value.trim();
+  CFG.bytpass          = document.getElementById('cfg-bytpass').value;
+  CFG.mabv             = (document.getElementById('cfg-mabv')             || {value:CFG.mabv||''}).value.trim();
+  CFG.bvid             = (document.getElementById('cfg-bvid')             || {value:CFG.bvid||''}).value.trim();
+  CFG.bytKieuKhaoSat   = (document.getElementById('cfg-byt-kieu')         || {value:CFG.bytKieuKhaoSat||'1'}).value;
+  CFG.bytNguoipv       = (document.getElementById('cfg-byt-nguoipv')      || {value:CFG.bytNguoipv||'2'}).value;
+  CFG.bytNguoiks       = (document.getElementById('cfg-byt-nguoiks')      || {value:CFG.bytNguoiks||''}).value.trim();
+  // FIX: Lưu khoaId (mã số khoa BYT) – cần cho BUG-06
+  CFG.khoaId           = (document.getElementById('cfg-khoaid')             || {value:CFG.khoaId||''}).value.trim();
+  const cbAuto = document.getElementById('cfg-auto-upload-settings');
+  if(cbAuto) CFG.autoUploadBYT = cbAuto.checked;
+  loadAutoUploadCheckboxes();
+  saveCFG();
+  if(CFG.hvname){
+    document.getElementById('sb-hospital-name').textContent=CFG.hvname;
+    ['m1','m2','m3','m4','m5'].forEach(k=>{['benhvien','donvi'].forEach(f=>{const el=document.getElementById(`${k}_${f}`);if(el&&!el.value)el.value=CFG.hvname;});});
+  }
+  toast('✅ Đã lưu – đang đồng bộ lên Cloud cho tất cả thiết bị...','success');
+  if(navigator.onLine && gsReady()){
+    gsPushConfig()
+      .then(()=>gsPushUsers())
+      .then(()=>gsPushDepts())
+      .then(()=>{ toast('☁️ Cấu hình đã đồng bộ Cloud – các thiết bị sẽ nhận khi đăng nhập lần sau','success'); gsLogHistory('save_config','Admin lưu cấu hình'); })
+      .catch(e=>toast('⚠️ Đồng bộ Cloud thất bại: '+e.message,'warning'));
+  } else if(!gsReady()){
+    toast('⚠️ Chưa kết nối Cloud – cấu hình chỉ lưu cục bộ','warning');
   }
 }
-
-async function gsSaveUsers(users) {
-  const rows = users.map(u => [u.id, u.username, u.fullname, u.role || 'user', u.dept || '', u.pwHash || '']);
-  await gsWrite('USERS!A2', rows);
-}
-
-// =========================================================
-// DEPTS sync
-// =========================================================
-async function gsLoadDepts() {
-  try {
-    const rows = await gsRead('DEPTS!A2:D500');
-    return rows.map(r => ({ id: r[0], name: r[1], code: r[2] || '', type: r[3] || 'lamsang' })).filter(d => d.id && d.name);
-  } catch(e) {
-    console.warn('gsLoadDepts error:', e);
-    return [];
+function loadCfgToUI(){
+  // FIX: Thêm khoaId vào map để load UI
+  const map={'cfg-sheetid':'sheetid','cfg-sa-email':'sa_email','cfg-sheetname':'sheetname','cfg-hvname':'hvname','cfg-province':'province','cfg-hang':'hang','cfg-bytuser':'bytuser','cfg-bytpass':'bytpass','cfg-mabv':'mabv','cfg-bvid':'bvid','cfg-byt-kieu':'bytKieuKhaoSat','cfg-byt-nguoipv':'bytNguoipv','cfg-byt-nguoiks':'bytNguoiks','cfg-khoaid':'khoaId'};
+  Object.entries(map).forEach(([elId,key])=>{const e=document.getElementById(elId);if(e&&CFG[key])e.value=CFG[key];});
+  const keyEl=document.getElementById('cfg-sa-key');
+  if(keyEl&&CFG.sa_key) keyEl.value=CFG.sa_key;
+  const saInfo=document.getElementById('sa-default-info');
+  if(saInfo){
+    const activeEmail=CFG.sa_email||SA_DEFAULT.sa_email;
+    if(activeEmail===SA_DEFAULT.sa_email){
+      saInfo.innerHTML='<span style="color:#2E7D32;font-size:11px;">✅ SA <b>kshl-328</b> tích hợp sẵn – chỉ cần nhập Spreadsheet ID</span>';
+    } else {
+      saInfo.innerHTML='<span style="color:#0D47A1;font-size:11px;">🔑 SA tùy chỉnh: <b>'+activeEmail.split('@')[0]+'</b></span>';
+    }
   }
-}
-
-async function gsSaveDepts(depts) {
-  const rows = depts.map(d => [d.id, d.name, d.code || '', d.type || 'lamsang']);
-  await gsWrite('DEPTS!A2', rows);
+  loadAutoUploadCheckboxes();
+  if(gsReady()) updateGSConnBadge(true);
+  const li=document.getElementById('local-info');
+  if(li) li.innerHTML='Tổng <b>'+DB.surveys.length+'</b> phiếu · <b>'+(JSON.stringify(DB).length/1024).toFixed(1)+' KB</b> · '+DEPTS.length+' khoa · '+USERS.length+' TK';
 }
 
 // =========================================================
-// HISTORY
+// HISTORY MODULE
 // =========================================================
-async function gsLogHistory(action, detail) {
-  if (!gsReady()) return;
-  try {
-    const user = CURRENT_USER?.username || 'system';
-    const device = navigator.userAgent.slice(0, 80);
-    await gsAppend('HISTORY!A:E', [[new Date().toISOString(), user, action, detail, device]]);
-  } catch(e) {
-    // Silent fail
-  }
-}
+let historyCache = [];
 
 async function loadHistory() {
+  if (!gsReady()) { toast('Chưa cấu hình Sheets', 'warning'); return; }
+  toast('⏳ Đang tải lịch sử...', 'info');
+  try {
+    const rows = await gsReadRange(`${GS_TABS.HISTORY}!A1:E10000`);
+    historyCache = rows.slice(1); // skip header
+    renderHistoryTable(historyCache);
+    toast(`✅ Đã tải ${historyCache.length} bản ghi lịch sử`, 'success');
+  } catch(e) {
+    toast('❌ Lỗi tải lịch sử: '+e.message, 'error');
+  }
+}
+
+function loadHistoryPreview() {
+  if (historyCache.length) { renderHistoryTable(historyCache); return; }
+  if (gsReady()) loadHistory();
+}
+
+function renderHistoryTable(rows) {
   const el = document.getElementById('history-table-wrap');
   if (!el) return;
-  if (!gsReady()) { el.innerHTML = '<div class="warn-box">⚠️ Chưa cấu hình Google Sheets</div>'; return; }
-  el.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text3);">🔄 Đang tải...</div>';
-  try {
-    const rows = await gsRead('HISTORY!A2:E500');
-    if (!rows.length) { el.innerHTML = '<div class="empty-state"><div class="empty-icon">🕒</div><div class="empty-text">Chưa có lịch sử</div></div>'; return; }
-    let html = '<table class="data-table"><thead><tr><th>Thời gian</th><th>Người dùng</th><th>Hành động</th><th>Chi tiết</th></tr></thead><tbody>';
-    rows.reverse().slice(0, 200).forEach(r => {
-      html += `<tr><td>${fmtDateTime(r[0])}</td><td>${r[1]||'—'}</td><td>${r[2]||'—'}</td><td style="font-size:12px;color:var(--text3);">${(r[3]||'').slice(0,120)}</td></tr>`;
-    });
-    html += '</tbody></table>';
-    el.innerHTML = html;
-  } catch(e) {
-    el.innerHTML = `<div class="warn-box">❌ Lỗi tải lịch sử: ${e.message}</div>`;
-  }
+  if (!rows.length) { el.innerHTML='<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-text">Chưa có lịch sử</div></div>'; return; }
+  const ACTION_ICONS = {login:'🔑',save_survey:'📝',push_all:'⬆️',pull_all:'⬇️',save_config:'⚙️',init_sheets:'🏗️',save_user:'👤',auto_sync:'🔄',default:'📋'};
+  let html = `<div class="table-wrap"><table class="data-table"><thead><tr>
+    <th>Thời gian</th><th>Người dùng</th><th>Hành động</th><th>Chi tiết</th><th>Thiết bị</th>
+  </tr></thead><tbody>`;
+  [...rows].reverse().forEach(r => {
+    const ts = r[0]||''; const user=r[1]||''; const action=r[2]||''; const detail=r[3]||''; const device=r[4]||'';
+    const icon = ACTION_ICONS[action] || ACTION_ICONS.default;
+    const dt = ts ? new Date(ts).toLocaleString('vi-VN') : '';
+    html += `<tr>
+      <td style="font-size:11.5px;white-space:nowrap;font-family:var(--mono)">${dt}</td>
+      <td><b>${user}</b></td>
+      <td>${icon} <span style="font-size:11.5px">${action}</span></td>
+      <td style="font-size:12px;color:var(--text2)">${detail}</td>
+      <td style="font-size:10px;color:var(--text3)">${device}</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  el.innerHTML = html;
 }
 
 function clearHistoryView() {
+  historyCache = [];
   const el = document.getElementById('history-table-wrap');
   if (el) el.innerHTML = '<div class="empty-state"><div class="empty-icon">🕒</div><div class="empty-text">Nhấn "Tải từ Sheets" để xem lịch sử</div></div>';
 }
 
-// =========================================================
-// TEST CONNECTION
-// =========================================================
-async function testSheets() {
-  const el = document.getElementById('cfg-sheets-status');
-  if (el) el.textContent = '🔄 Đang kiểm tra...';
-  try {
-    await gsGetToken();
-    const meta = await gsGetSheetMeta();
-    const title = meta.sheets?.[0]?.properties?.title || 'OK';
-    if (el) el.innerHTML = `<span style="color:var(--success)">✅ Kết nối thành công! Sheet đầu tiên: <b>${title}</b></span>`;
-    const badge = document.getElementById('gs-conn-badge');
-    if (badge) { badge.textContent = '✅ Đã kết nối'; badge.style.background = '#E8F5E9'; badge.style.color = '#2E7D32'; }
-    toast('✅ Kết nối Google Sheets thành công!', 'success');
-  } catch(e) {
-    if (el) el.innerHTML = `<span style="color:var(--accent2)">❌ Lỗi: ${e.message}</span>`;
-    toast('❌ Lỗi kết nối: ' + e.message, 'error');
-  }
-}
-
-// =========================================================
-// BOOTSTRAP – Load config from Sheets on first run
-// =========================================================
-async function bootstrapConnect() {
-  const sid = document.getElementById('bs-sheetid')?.value?.trim();
-  if (!sid) { document.getElementById('bs-err').textContent = '⚠️ Vui lòng nhập Spreadsheet ID'; document.getElementById('bs-err').style.display = ''; return; }
-
-  CFG.sheetId = sid;
-  // Use default built-in SA
-  CFG.saEmail = CFG.saEmail || 'kshl-328@crack-descent-492209-c3.iam.gserviceaccount.com';
-  saveCFG();
-
-  const btn = document.getElementById('bs-connect-btn');
-  const status = document.getElementById('bs-status');
-  const bar = document.getElementById('bs-progress-bar');
-  if (btn) btn.disabled = true;
-  if (bar) bar.style.display = '';
-  if (status) status.textContent = 'Đang kết nối...';
-
-  try {
-    setProgress(30);
-    if (status) status.textContent = '🔑 Đang xác thực Service Account...';
-    await gsGetToken();
-
-    setProgress(60);
-    if (status) status.textContent = '📥 Đang tải cấu hình...';
-    await gsLoadConfig();
-
-    setProgress(90);
-    if (status) status.textContent = '👥 Đang tải tài khoản...';
-    const users = await gsLoadUsers();
-    localStorage.setItem('kshl_users', JSON.stringify(users));
-
-    setProgress(100);
-    if (status) status.textContent = '✅ Thành công! Đang khởi động...';
-    document.getElementById('bs-err').style.display = 'none';
-
-    setTimeout(() => {
-      document.getElementById('bootstrap-screen').classList.add('hidden');
-      initApp();
-    }, 800);
-  } catch(e) {
-    if (btn) btn.disabled = false;
-    if (bar) bar.style.display = 'none';
-    const err = document.getElementById('bs-err');
-    if (err) { err.textContent = '❌ ' + e.message; err.style.display = ''; }
-    if (status) status.textContent = '';
-  }
-}
-
-function setProgress(pct) {
-  const fill = document.getElementById('bs-progress-fill') || document.getElementById('bs-loading-fill');
-  if (fill) fill.style.width = pct + '%';
-}
-
-function bsValidateId(val) {
-  const hint = document.getElementById('bs-id-hint');
-  if (!hint) return;
-  if (!val) { hint.style.display = 'none'; return; }
-  const looks = /^[a-zA-Z0-9_-]{20,}$/.test(val.trim());
-  hint.style.display = '';
-  hint.innerHTML = looks
-    ? '<span style="color:#2E7D32;">✅ ID có vẻ hợp lệ</span>'
-    : '<span style="color:#E65100;">⚠️ ID không đúng định dạng – kiểm tra lại URL Google Sheets</span>';
-}
-
-function bsCopyEmail() {
-  const email = 'kshl-328@crack-descent-492209-c3.iam.gserviceaccount.com';
-  navigator.clipboard?.writeText(email).then(() => toast('📋 Đã copy email SA', 'success')).catch(() => {});
-}
-
-// =========================================================
-// SETTINGS HELPERS
-// =========================================================
-function parseSAJson() {
-  const raw = document.getElementById('cfg-sa-json-paste')?.value?.trim();
-  if (!raw) { toast('⚠️ Chưa dán nội dung file JSON', 'warning'); return; }
-  try {
-    const obj = JSON.parse(raw);
-    if (obj.client_email) document.getElementById('cfg-sa-email').value = obj.client_email;
-    if (obj.private_key) document.getElementById('cfg-sa-key').value = obj.private_key;
-    toast('✅ Đã phân tích JSON Key thành công!', 'success');
-  } catch(e) {
-    toast('❌ JSON không hợp lệ: ' + e.message, 'error');
-  }
-}
-
-function saveCfgSheets() {
-  CFG.sheetId   = document.getElementById('cfg-sheetid')?.value?.trim()   || '';
-  CFG.saEmail   = document.getElementById('cfg-sa-email')?.value?.trim()  || '';
-  CFG.saKey     = document.getElementById('cfg-sa-key')?.value?.trim()    || '';
-  CFG.sheetName = document.getElementById('cfg-sheetname')?.value?.trim() || 'SURVEYS';
-  saveCFG();
-  _gsToken = null; // Force re-auth
-  toast('💾 Đã lưu cấu hình Sheets', 'success');
-  updateShareLink();
-}
-
-function saveCfgAll() {
-  saveCfgSheets();
-  CFG.hvname   = document.getElementById('cfg-hvname')?.value?.trim()   || '';
-  CFG.province = document.getElementById('cfg-province')?.value?.trim() || '';
-  CFG.hang     = document.getElementById('cfg-hang')?.value             || '';
-  CFG.bytuser  = document.getElementById('cfg-bytuser')?.value?.trim()  || '';
-  CFG.bytpass  = document.getElementById('cfg-bytpass')?.value          || '';
-  // mabv không có field riêng trong settings UI – lấy từ hvname hoặc cấu hình riêng
-  saveCFG();
-  if (gsReady()) gsSaveConfig().catch(() => {});
-  toast('💾 Đã lưu toàn bộ cấu hình!', 'success');
-  loadAutoUploadCheckboxes();
-}
-
-function loadSettingsUI() {
-  const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
-  setVal('cfg-sheetid', CFG.sheetId);
-  setVal('cfg-sa-email', CFG.saEmail);
-  setVal('cfg-sa-key', CFG.saKey);
-  setVal('cfg-sheetname', CFG.sheetName || 'SURVEYS');
-  setVal('cfg-hvname', CFG.hvname);
-  setVal('cfg-province', CFG.province);
-  setVal('cfg-hang', CFG.hang);
-  setVal('cfg-bytuser', CFG.bytuser);
-  setVal('cfg-bytpass', CFG.bytpass);
-  updateShareLink();
-  updateLocalInfo();
-  const badge = document.getElementById('gs-conn-badge');
-  if (badge) {
-    if (gsReady()) { badge.textContent = '✅ Đã cấu hình'; badge.style.background = '#E8F5E9'; badge.style.color = '#2E7D32'; }
-    else { badge.textContent = '⚠️ Chưa kết nối'; badge.style.background = '#FFF3E0'; badge.style.color = '#E65100'; }
-  }
-}
-
-function showGsSyncStatus(msg) {
-  const el = document.getElementById('gs-sync-status');
-  if (el) el.textContent = msg;
-  const el2 = document.getElementById('gs-dash-status');
-  if (el2) el2.textContent = msg;
-}
-
-function updateLocalInfo() {
-  const el = document.getElementById('local-info');
+// Update dashboard GS status
+function updateGSDashStatus() {
+  const el = document.getElementById('gs-dash-status');
   if (!el) return;
-  el.innerHTML = `📊 <b>${DB.surveys.length}</b> phiếu · <b>${DB.surveys.filter(r=>r.status==='synced').length}</b> đã đồng bộ · <b>${DB.surveys.filter(r=>r.bytStatus==='done').length}</b> đã gửi BYT`;
+  if (!CFG.sheetid) { el.innerHTML = '⚠️ Chưa cấu hình Sheets – dữ liệu chỉ lưu cục bộ'; return; }
+  const synced = DB.surveys.filter(x=>x.status==='synced').length;
+  const pending = DB.surveys.filter(x=>x.status==='pending').length;
+  const pct = DB.surveys.length ? Math.round(synced/DB.surveys.length*100) : 100;
+  el.innerHTML = `☁️ Sheets: <b>${synced}</b> đã sync · <b style="color:var(--warning)">${pending}</b> pending · ${pct}% hoàn tất`;
+  const bar = document.getElementById('sync-progress');
+  if (bar) bar.style.width = pct+'%';
+  if (CFG.sheetid) document.getElementById('sheets-status').innerHTML = `✅ Đã cấu hình: <b>${CFG.sheetid.substring(0,20)}...</b>`;
 }
 
 // =========================================================
-// SHARE LINK
+// PERSISTENCE – LOCAL (cache layer)
 // =========================================================
-function updateShareLink() {
+function saveDB()    { localStorage.setItem('kshl_v4_db',    JSON.stringify(DB));    }
+function saveCFG()   { localStorage.setItem('kshl_v4_cfg',   JSON.stringify(CFG));   }
+function saveUsers() { localStorage.setItem('kshl_v4_users', JSON.stringify(USERS)); }
+function saveDepts() { localStorage.setItem('kshl_v4_depts', JSON.stringify(DEPTS)); }
+
+// =========================================================
+// GOOGLE SHEETS ENGINE  — Multi-tab Database
+// Tabs: CONFIG | SURVEYS | USERS | DEPTS | HISTORY
+// =========================================================
+// GOOGLE SHEETS ENGINE — Service Account JWT Auth
+// Tabs: CONFIG | SURVEYS | USERS | DEPTS | HISTORY
+// =========================================================
+const GS_TABS = { CONFIG:'CONFIG', SURVEYS:'SURVEYS', USERS:'USERS', DEPTS:'DEPTS', HISTORY:'HISTORY' };
+
+// ---- JWT / OAuth2 token management ----
+let _gsToken = null;
+let _gsTokenExp = 0;
+
+function gsReady() {
+  return !!(CFG.sheetid && (CFG.sa_email || SA_DEFAULT.sa_email) && (CFG.sa_key || SA_DEFAULT.sa_key));
+}
+
+// Build JWT and exchange for access token via Google OAuth2
+async function gsGetToken() {
+  if (_gsToken && Date.now() < _gsTokenExp - 60000) return _gsToken;
+
+  const email  = CFG.sa_email || SA_DEFAULT.sa_email;
+  const rawKey = CFG.sa_key   || SA_DEFAULT.sa_key;
+
+  // 1. Build JWT header + payload
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    iss: email,
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
+    aud: 'https://oauth2.googleapis.com/token',
+    exp: now + 3600,
+    iat: now
+  };
+
+  const b64u = s => btoa(unescape(encodeURIComponent(JSON.stringify(s))))
+    .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+  const sigInput = b64u(header) + '.' + b64u(payload);
+
+  // 2. Sign with RS256 using Web Crypto API
+  const pemBody = rawKey
+    .replace(/-----BEGIN PRIVATE KEY-----/, '')
+    .replace(/-----END PRIVATE KEY-----/, '')
+    .replace(/\s/g, '');
+  const keyBytes = Uint8Array.from(atob(pemBody), c => c.charCodeAt(0));
+  const cryptoKey = await crypto.subtle.importKey(
+    'pkcs8', keyBytes.buffer,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false, ['sign']
+  );
+  const sigBytes = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5', cryptoKey,
+    new TextEncoder().encode(sigInput)
+  );
+  const sig = btoa(String.fromCharCode(...new Uint8Array(sigBytes)))
+    .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+  const jwt = sigInput + '.' + sig;
+
+  // 3. Exchange JWT for access token
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
+  });
+  const d = await res.json();
+  if (!d.access_token) throw new Error('Không lấy được token: ' + (d.error_description || d.error || JSON.stringify(d)));
+
+  _gsToken = d.access_token;
+  _gsTokenExp = Date.now() + (d.expires_in || 3600) * 1000;
+  return _gsToken;
+}
+
+// ---- Core HTTP wrapper ----
+async function gsRequest(path, method='GET', body=null) {
+  if (!gsReady()) throw new Error('Chưa cấu hình Service Account');
+  const token = await gsGetToken();
+  const base = `https://sheets.googleapis.com/v4/spreadsheets/${CFG.sheetid}`;
+  const url = base + path;
+  const opts = {
+    method,
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'Content-Type': 'application/json'
+    }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// ---- Tab management ----
+async function gsGetSheetsList() {
+  const d = await gsRequest('?fields=sheets.properties');
+  return (d.sheets||[]).map(s => s.properties.title);
+}
+
+async function gsEnsureTab(tabName, headers=[]) {
+  try {
+    const tabs = await gsGetSheetsList();
+    if (!tabs.includes(tabName)) {
+      await gsRequest(':batchUpdate', 'POST', {
+        requests: [{ addSheet: { properties: { title: tabName, gridProperties: { frozenRowCount: 1 } } } }]
+      });
+      if (headers.length) await gsWriteRange(`${tabName}!A1`, [headers]);
+      return true;
+    }
+    return false;
+  } catch(e) { console.warn('ensureTab error:', e); return false; }
+}
+
+async function gsWriteRange(range, values) {
+  return gsRequest(`/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`, 'PUT', { values });
+}
+
+async function gsAppendRange(tabName, values) {
+  return gsRequest(
+    `/values/${encodeURIComponent(tabName + '!A1')}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    'POST', { values }
+  );
+}
+
+async function gsReadRange(range) {
+  const d = await gsRequest(`/values/${encodeURIComponent(range)}`);
+  return d.values || [];
+}
+
+async function gsClearRange(tabName) {
+  return gsRequest(`/values/${encodeURIComponent(tabName + '!A2:ZZZ')}:clear`, 'POST', {});
+}
+
+// ---- Initialize Sheets structure ----
+async function gsInitSheets() {
+  if (!gsReady()) { toast('Nhập đầy đủ thông tin Service Account trước', 'warning'); return; }
+  const el = document.getElementById('gs-sync-status');
+  if (el) el.innerHTML = '🏗️ Đang tạo cấu trúc Sheets...';
+  try {
+    const cfgHdr  = ['key','value','updated_at'];
+    const survHdr = ['id','createdAt','type','type_label','qd','ngay','khoa','gt','tuoi','sdt','bhyt','noiss','mucsong','lanthu','nguoitl','submittedBy','status','bytStatus','avg_score','answered_count','total_questions','notes','answers_json'];
+    const usrHdr  = ['id','username','fullname','role','dept','password_hash'];
+    const deptHdr = ['id','name','code','type'];
+    const histHdr = ['timestamp','user','action','detail','device'];
+    const reqHdr  = ['ID','Loại','Họ tên','Tên đăng nhập','Liên hệ','Khoa/Phòng','Lý do','Ưu tiên','Trạng thái','Thời gian tạo','Thời gian xử lý'];
+    await gsEnsureTab(GS_TABS.CONFIG,  cfgHdr);
+    await gsEnsureTab(GS_TABS.SURVEYS, survHdr);
+    await gsEnsureTab(GS_TABS.USERS,   usrHdr);
+    await gsEnsureTab(GS_TABS.DEPTS,   deptHdr);
+    await gsEnsureTab(GS_TABS.HISTORY, histHdr);
+    await gsEnsureTab('REQUESTS',      reqHdr);
+    if (el) el.innerHTML = '✅ Tạo cấu trúc thành công! Sẵn sàng đồng bộ.';
+    toast('✅ Đã tạo cấu trúc Sheets (6 tabs)', 'success');
+    gsLogHistory('init_sheets', 'Tạo cấu trúc Sheets thành công (6 tabs: CONFIG, SURVEYS, USERS, DEPTS, HISTORY, REQUESTS)');
+    updateGSConnBadge(true);
+  } catch(e) {
+    if (el) el.innerHTML = `❌ Lỗi: ${e.message}`;
+    toast('❌ Lỗi tạo Sheets: ' + e.message, 'error');
+  }
+}
+
+// ---- PUSH: Local → Sheets ----
+async function gsPushAllData(showMsg=true) {
+  if (!gsReady()) { if(showMsg) toast('Chưa cấu hình Service Account', 'warning'); return false; }
+  if (showMsg) toast('⬆️ Đang đẩy toàn bộ dữ liệu lên Sheets...', 'info');
+  const el = document.getElementById('gs-sync-status');
+  if (el) el.innerHTML = '⬆️ Đang đẩy dữ liệu...';
+  try {
+    await gsPushConfig();
+    await gsPushSurveys();
+    await gsPushUsers();
+    await gsPushDepts();
+    const now = new Date().toLocaleString('vi-VN');
+    CFG.lastPushed = now; saveCFG();
+    if (el) el.innerHTML = `✅ Đẩy thành công lúc ${now}`;
+    if (showMsg) toast('✅ Đã đẩy toàn bộ lên Sheets', 'success');
+    gsLogHistory('push_all', `Push ${DB.surveys.length} phiếu, ${DEPTS.length} khoa, ${USERS.length} users`);
+    updateGSConnBadge(true);
+    return true;
+  } catch(e) {
+    if (el) el.innerHTML = `❌ Lỗi đẩy dữ liệu: ${e.message}`;
+    if (showMsg) toast('❌ Lỗi: ' + e.message, 'error');
+    return false;
+  }
+}
+
+async function gsPushConfig() {
+  const now = new Date().toISOString();
+  const cfgData = Object.entries({
+    hvname:         CFG.hvname||'',
+    province:       CFG.province||'',
+    hang:           CFG.hang||'',
+    bytuser:        CFG.bytuser||'',
+    bytpass:        btoa(unescape(encodeURIComponent(CFG.bytpass||''))),
+    sheetid:        CFG.sheetid||'',
+    sa_email:       CFG.sa_email||'',
+    sa_key:         btoa(unescape(encodeURIComponent(CFG.sa_key||''))),
+    sheetname:      CFG.sheetname||'SURVEYS',
+    autoUploadBYT:  String(CFG.autoUploadBYT||false),
+    // FIX: Thêm các field BYT để đồng bộ đa thiết bị
+    mabv:           CFG.mabv||'',
+    bvid:           CFG.bvid||'',
+    khoaId:         CFG.khoaId||'',
+    bytKieuKhaoSat: CFG.bytKieuKhaoSat||'1',
+    bytNguoipv:     CFG.bytNguoipv||'2',
+    bytNguoiks:     CFG.bytNguoiks||'',
+    users_json:     JSON.stringify(USERS),
+    depts_json:     JSON.stringify(DEPTS),
+  }).map(([k,v]) => [k, v, now]);
+  await gsClearRange(GS_TABS.CONFIG);
+  if (cfgData.length) await gsAppendRange(GS_TABS.CONFIG, cfgData);
+}
+
+async function gsPushSurveys() {
+  const rows = DB.surveys.map(surveyToRow);
+  await gsClearRange(GS_TABS.SURVEYS);
+  if (rows.length) await gsAppendRange(GS_TABS.SURVEYS, rows);
+}
+
+async function gsPushUsers() {
+  await gsClearRange(GS_TABS.USERS);
+  if (USERS.length) await gsAppendRange(GS_TABS.USERS,
+    USERS.map(u => [u.id, u.username, u.fullname, u.role, u.dept||'', btoa(unescape(encodeURIComponent(u.password||'')))]));
+}
+
+async function gsPushDepts() {
+  await gsClearRange(GS_TABS.DEPTS);
+  if (DEPTS.length) await gsAppendRange(GS_TABS.DEPTS,
+    DEPTS.map(d => [d.id, d.name, d.code||'', d.type||'lamsang']));
+}
+
+// ---- PULL: Sheets → Local ----
+async function gsPullAllData(showMsg=true) {
+  if (!gsReady()) { if(showMsg) toast('Chưa cấu hình Service Account', 'warning'); return false; }
+  if (showMsg) toast('⬇️ Đang kéo dữ liệu từ Sheets...', 'info');
+  const el = document.getElementById('gs-sync-status');
+  if (el) el.innerHTML = '⬇️ Đang kéo dữ liệu...';
+  try {
+    await gsPullConfig();
+    await gsPullSurveys();
+    await gsPullUsers();
+    await gsPullDepts();
+    saveDB(); saveCFG(); saveUsers(); saveDepts();
+    buildAllForms(); loadCfgToUI(); updateDash(); renderList(); refreshDeptDropdowns(); loadAutoUploadCheckboxes();
+    const now = new Date().toLocaleString('vi-VN');
+    if (el) el.innerHTML = `✅ Đồng bộ thành công lúc ${now}`;
+    if (showMsg) toast(`✅ Kéo xong: ${DB.surveys.length} phiếu, ${DEPTS.length} khoa`, 'success');
+    updateGSConnBadge(true);
+    return true;
+  } catch(e) {
+    if (el) el.innerHTML = `❌ Lỗi kéo dữ liệu: ${e.message}`;
+    if (showMsg) toast('❌ Lỗi: ' + e.message, 'error');
+    return false;
+  }
+}
+
+function safeDecode(s) {
+  try { return decodeURIComponent(escape(atob(s))); } catch(e) { return s; }
+}
+
+async function gsPullConfig() {
+  const rows = await gsReadRange(`${GS_TABS.CONFIG}!A2:C1000`);
+  if (!rows.length) return;
+  const map = {};
+  rows.forEach(r => { if(r[0]) map[r[0]] = r[1]||''; });
+  if (map.hvname)        CFG.hvname        = map.hvname;
+  if (map.province)      CFG.province      = map.province;
+  if (map.hang)          CFG.hang          = map.hang;
+  if (map.bytuser)       CFG.bytuser       = map.bytuser;
+  if (map.bytpass)       CFG.bytpass       = safeDecode(map.bytpass);
+  if (map.sheetid)       CFG.sheetid       = map.sheetid;
+  if (map.sa_email)      CFG.sa_email      = map.sa_email;
+  if (map.sa_key)        CFG.sa_key        = safeDecode(map.sa_key);
+  if (map.sheetname)     CFG.sheetname     = map.sheetname;
+  if (map.autoUploadBYT) CFG.autoUploadBYT = map.autoUploadBYT === 'true';
+  // FIX: Đồng bộ các field BYT còn thiếu từ Cloud
+  if (map.mabv)           CFG.mabv           = map.mabv;
+  if (map.bvid)           CFG.bvid           = map.bvid;
+  if (map.khoaId)         CFG.khoaId         = map.khoaId;
+  if (map.bytKieuKhaoSat) CFG.bytKieuKhaoSat = map.bytKieuKhaoSat;
+  if (map.bytNguoipv)     CFG.bytNguoipv     = map.bytNguoipv;
+  if (map.bytNguoiks)     CFG.bytNguoiks     = map.bytNguoiks;
+  if (map.users_json) {
+    try { const pu = JSON.parse(map.users_json); if(Array.isArray(pu)&&pu.length) USERS = pu; } catch(e){}
+  }
+  if (map.depts_json) {
+    try { const pd = JSON.parse(map.depts_json); if(Array.isArray(pd)&&pd.length) DEPTS = pd; } catch(e){}
+  }
+}
+
+async function gsPullSurveys() {
+  const rows = await gsReadRange(`${GS_TABS.SURVEYS}!A2:W100000`);
+  if (!rows.length) { DB.surveys = []; return; }
+  DB.surveys = rows.filter(r=>r[0]).map(rowToSurvey);
+}
+
+async function gsPullUsers() {
+  const rows = await gsReadRange(`${GS_TABS.USERS}!A2:F1000`);
+  if (!rows.length) return;
+  const pulled = rows.filter(r=>r[0]).map(r => ({
+    id: r[0], username: r[1]||'', fullname: r[2]||'', role: r[3]||'user', dept: r[4]||'',
+    password: safeDecode(r[5]||'')
+  }));
+  if (pulled.length) USERS = pulled;
+}
+
+async function gsPullDepts() {
+  const rows = await gsReadRange(`${GS_TABS.DEPTS}!A2:D1000`);
+  if (!rows.length) return;
+  DEPTS = rows.filter(r=>r[0]).map(r => ({ id:r[0], name:r[1]||'', code:r[2]||'', type:r[3]||'lamsang' }));
+}
+
+// ---- Survey Row serialization ----
+function surveyToRow(r) {
+  // FIX BUG-10: answered bao gồm value=0 (KSD), avg chỉ tính value>0
+  const answered = r.answers?.filter(a => a.value !== null && a.value !== undefined && a.value !== '') || [];
+  const scored   = answered.filter(a => Number(a.value) > 0);
+  const avg      = scored.length ? (scored.reduce((s,a) => s + Number(a.value), 0) / scored.length).toFixed(2) : '';
+  return [
+    r.id, r.createdAt, r.type, SURVEYS[r.type]?.label||r.type, SURVEYS[r.type]?.qd||'',
+    r.ngay||'', r.khoa||r.donvi||'', r.gt||'', r.tuoi||'', r.sdt||'',
+    r.bhyt||'', r.noiss||'', r.mucsong||'', r.lanthu||'', r.nguoitl||'',
+    r.submittedBy||'', r.status||'pending', r.bytStatus||'pending',
+    avg, answered.length, r.answers?.length||0,
+    r.notes||r.kiennghi||r.ykien||'',
+    JSON.stringify(r.answers||[])
+  ];
+}
+
+function rowToSurvey(r) {
+  let answers = [];
+  try { answers = JSON.parse(r[22]||'[]'); } catch(e){}
+  return {
+    id:r[0], createdAt:r[1], type:r[2],
+    ngay:r[5], khoa:r[6], donvi:r[6], gt:r[7], tuoi:r[8], sdt:r[9],
+    bhyt:r[10], noiss:r[11], mucsong:r[12], lanthu:r[13], nguoitl:r[14],
+    submittedBy:r[15], status:r[16]||'pending', bytStatus:r[17]||'pending',
+    notes:r[21], answers
+  };
+}
+
+// ---- Single survey push (called after saveForm) ----
+async function gsPushOneSurvey(rec) {
+  if (!gsReady()) return false;
+  try {
+    await gsAppendRange(GS_TABS.SURVEYS, [surveyToRow(rec)]);
+    rec.status = 'synced';
+    saveDB(); updateDash();
+    gsLogHistory('save_survey', `Lưu phiếu ${rec.type} - ${rec.ngay||''} - ${rec.khoa||rec.donvi||''}`);
+    return true;
+  } catch(e) {
+    console.error('gsPushOneSurvey error:', e);
+    return false;
+  }
+}
+
+// ---- Update survey status in Sheets ----
+// FIX BUG: Cột R = bytStatus (index 17, base-1 = cột 18 = 'R')
+// Cột Q = status (upload GS), Cột R = bytStatus (gửi BYT)
+// Schema: A=id,B=createdAt,...,Q=status(17),R=bytStatus(18)
+async function gsUpdateSurveyStatus(id, bytStatus) {
+  if (!gsReady()) return;
+  try {
+    const rows = await gsReadRange(`${GS_TABS.SURVEYS}!A2:A100000`);
+    const idx = rows.findIndex(r=>r[0]===id);
+    if (idx < 0) return;
+    const rowNum = idx + 2;
+    // Ghi bytStatus vào cột R (col 18), không phải Q (col 17 = status GS)
+    await gsWriteRange(`${GS_TABS.SURVEYS}!R${rowNum}`, [[bytStatus]]);
+  } catch(e) { console.error('gsUpdateSurveyStatus:', e); }
+}
+
+// ---- Connection badge ----
+function updateGSConnBadge(connected) {
+  const b = document.getElementById('gs-conn-badge');
+  if (!b) return;
+  if (connected) { b.style.background='#E8F5E9'; b.style.color='#2E7D32'; b.textContent='✅ Đã kết nối'; }
+  else { b.style.background='#FFF3E0'; b.style.color='#E65100'; b.textContent='⚠️ Chưa kết nối'; }
+}
+
+// ---- gsAutoStartSync (kept for manual trigger + backward compat) ----
+async function gsAutoStartSync() {
+  if (!gsReady()) { updateGSConnBadge(false); return; }
+  await gsFullSyncOnLogin().catch(()=>{});
+}
+
+// ---- Log history ----
+async function gsLogHistory(action, detail) {
+  if (!gsReady()) return;
+  try {
+    const ts = new Date().toISOString();
+    const user = currentUser?.username || 'system';
+    const device = navigator.userAgent.substring(0, 80);
+    await gsAppendRange(GS_TABS.HISTORY, [[ts, user, action, detail, device]]);
+  } catch(e) { /* silent */ }
+}
+
+
+// =========================================================
+// MOBILE SHARE LINK & QR CODE
+// =========================================================
+
+/** Tạo link chia sẻ có kèm ?sid= để mobile tự động cấu hình */
+function getShareLink() {
+  const sid = CFG.sheetid || '';
+  if (!sid) return '';
+  const base = location.origin + location.pathname;
+  return `${base}?sid=${encodeURIComponent(sid)}`;
+}
+
+/** Cập nhật ô link chia sẻ khi mở trang Cấu hình */
+function refreshShareLink() {
   const inp = document.getElementById('share-link-input');
   if (!inp) return;
-  if (CFG.sheetId) {
-    const base = location.href.split('?')[0];
-    inp.value = `${base}?sid=${CFG.sheetId}`;
-  } else {
-    inp.value = '';
-    inp.placeholder = 'Lưu cấu hình trước để tạo link...';
+  const link = getShareLink();
+  inp.value = link || '';
+  inp.placeholder = link ? '' : 'Chưa có Spreadsheet ID — lưu cấu hình trước';
+  const status = document.getElementById('share-link-status');
+  if (status) {
+    if (link) {
+      status.textContent = '✅ Gửi link này cho nhân viên, mở link là tự động kết nối';
+      status.style.color = '#2E7D32';
+    } else {
+      status.textContent = '⚠️ Nhập Spreadsheet ID và nhấn Lưu trước';
+      status.style.color = '#E65100';
+    }
   }
 }
 
-function copyShareLink() {
-  const inp = document.getElementById('share-link-input');
-  if (!inp || !inp.value) { toast('⚠️ Chưa có link để copy', 'warning'); return; }
-  navigator.clipboard?.writeText(inp.value).then(() => {
+/** Copy link chia sẻ vào clipboard */
+async function copyShareLink() {
+  const link = getShareLink();
+  if (!link) { toast('⚠️ Chưa có Spreadsheet ID – lưu cấu hình trước', 'warning'); return; }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(link);
+    } else {
+      const el = document.getElementById('share-link-input');
+      el.select(); document.execCommand('copy');
+    }
     toast('📋 Đã copy link chia sẻ!', 'success');
-    const st = document.getElementById('share-link-status');
-    if (st) st.textContent = '✅ Đã copy!';
-  }).catch(() => {
-    inp.select(); document.execCommand('copy');
-    toast('📋 Đã copy!', 'success');
-  });
+    const status = document.getElementById('share-link-status');
+    if (status) { status.textContent = '✅ Đã copy! Dán vào Zalo/Email gửi cho nhân viên'; status.style.color = '#2E7D32'; }
+  } catch(e) {
+    toast('⚠️ Không copy được – thử chọn và copy thủ công', 'warning');
+  }
 }
 
+/** Gửi link qua Zalo (mở Zalo share) */
 function shareToZalo() {
-  const inp = document.getElementById('share-link-input');
-  if (!inp?.value) { toast('⚠️ Chưa có link', 'warning'); return; }
-  window.open('https://zalo.me/share?text=' + encodeURIComponent('Mở link để dùng app khảo sát: ' + inp.value), '_blank');
+  const link = getShareLink();
+  if (!link) { toast('⚠️ Chưa có Spreadsheet ID – lưu cấu hình trước', 'warning'); return; }
+  const text = encodeURIComponent(`📱 Mở link này để dùng ứng dụng Khảo sát Hài lòng (tự động kết nối, không cần cấu hình):\n${link}`);
+  // Zalo share URL
+  window.open(`https://zalo.me/share?text=${text}`, '_blank');
 }
 
-function generateShareQR() {
-  const inp = document.getElementById('share-link-input');
-  if (!inp?.value) { toast('⚠️ Chưa có link', 'warning'); return; }
+/** Tạo QR code bằng canvas thuần (không cần thư viện ngoài) */
+async function generateShareQR() {
+  const link = getShareLink();
+  if (!link) { toast('⚠️ Chưa có Spreadsheet ID – lưu cấu hình trước', 'warning'); return; }
+
   const container = document.getElementById('share-qr-container');
   const canvas = document.getElementById('share-qr-canvas');
   if (!container || !canvas) return;
-  // Use a QR library if available, otherwise show link
+
+  // Dùng QR code API miễn phí (không cần key)
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(link)}&format=svg&qzone=2`;
+  
+  // Hiển thị bằng <img> thay vì canvas để đơn giản hơn
   container.style.display = '';
-  const ctx = canvas.getContext('2d');
-  canvas.width = 200; canvas.height = 200;
-  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,200,200);
-  ctx.fillStyle = '#333'; ctx.font = '11px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('QR Code cho link:', 100, 80);
-  ctx.fillText('(Cài thư viện qrcode.js', 100, 100);
-  ctx.fillText('để tạo QR thực)', 100, 120);
-  toast('💡 Thêm thư viện qrcode.js để tạo QR code', 'info');
+  container.innerHTML = `
+    <div style="font-size:11px;color:var(--text2);margin-bottom:8px;">📷 Quét bằng camera điện thoại để mở ứng dụng đã cấu hình sẵn:</div>
+    <img src="${qrUrl}" alt="QR Code" style="width:200px;height:200px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.12);border:3px solid #fff;" 
+         onerror="this.parentElement.innerHTML='<div style=color:#E53935;font-size:12px;>❌ Không tải được QR — kiểm tra internet</div>'" />
+    <div style="font-size:10px;color:var(--text3);margin-top:6px;">Nhấn giữ ảnh → Lưu để in QR code</div>
+    <div style="font-size:10px;color:#0D47A1;margin-top:4px;word-break:break-all;background:#E8F0FE;padding:5px 8px;border-radius:6px;">${link}</div>
+  `;
+  toast('📷 QR Code đã tạo!', 'success');
 }
