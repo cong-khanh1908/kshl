@@ -123,6 +123,11 @@
         </div>
       </div>
       <div class="login-err" id="login-err" style="display:none;">⚠️ Vui lòng nhập tên đăng nhập và mật khẩu</div>
+      <!-- BUG4 FIX: Checkbox Nhớ tôi – session sống 30 ngày thay vì 8 giờ -->
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <input type="checkbox" id="login-remember" style="width:15px;height:15px;accent-color:var(--primary);cursor:pointer;">
+        <label for="login-remember" style="font-size:12px;color:rgba(255,255,255,.7);cursor:pointer;margin:0;">Nhớ đăng nhập trên thiết bị này (30 ngày)</label>
+      </div>
       <button class="login-btn login-btn-primary" onclick="doLogin()" id="login-submit-btn">🔐 Đăng nhập</button>
       <div id="login-sheetid-row" style="display:none;margin-top:12px;padding:10px 12px;background:#E3F2FD;border-radius:9px;">
         <div style="font-size:11px;color:#0D47A1;font-weight:700;margin-bottom:5px;">⚠️ Thiết bị chưa kết nối Cloud</div>
@@ -130,10 +135,159 @@
           placeholder="Nhập Spreadsheet ID..." style="font-size:13px;padding:9px 12px;"/>
         <div style="font-size:9px;color:var(--text3);margin-top:3px;">Share cho: kshl-328@crack-descent-492209-c3.iam.gserviceaccount.com</div>
       </div>
-      <!-- Account request links -->
-      <div style="margin-top:14px;display:flex;flex-direction:column;gap:7px;">
-        <button class="login-btn" style="background:#E8F0FE;color:#0D47A1;border:1.5px solid #BBDEFB;font-size:13px;padding:10px;margin-top:0;" onclick="openAccountRequest('new')">📋 Yêu cầu cấp tài khoản mới</button>
-        <button class="login-btn" style="background:#FFF8E1;color:#E65100;border:1.5px solid #FFE082;font-size:13px;padding:10px;margin-top:0;" onclick="openAccountRequest('reset')">🔑 Quên mật khẩu / Yêu cầu reset</button>
+      <!-- ★ FIX: Nút yêu cầu TK/quên MK – hiển thị IN-PLACE trong login box thay vì modal -->
+      <div style="margin-top:14px;display:flex;flex-direction:column;gap:7px;" id="lp-main">
+        <button class="login-btn" style="background:#E8F0FE;color:#0D47A1;border:1.5px solid #BBDEFB;font-size:13px;padding:10px;margin-top:0;" onclick="loginPanelShow('new')">📋 Yêu cầu cấp tài khoản mới</button>
+        <button class="login-btn" style="background:#FFF8E1;color:#E65100;border:1.5px solid #FFE082;font-size:13px;padding:10px;margin-top:0;" onclick="loginPanelShow('reset')">🔑 Quên mật khẩu / Yêu cầu reset</button>
+      </div>
+    </div>
+
+    <!-- ★ LOGIN PANEL: Yêu cầu cấp tài khoản mới (hiển thị IN-PLACE, ẩn theo mặc định) -->
+    <div id="lp-new" style="display:none;">
+      <!-- Step indicators -->
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:16px;justify-content:center;">
+        <div id="lp-new-s1" class="lp-step lp-step-active"><div class="lp-step-num">1</div><div class="lp-step-label">Thông tin</div></div>
+        <div style="flex:1;height:2px;background:rgba(255,255,255,.2);border-radius:2px;"></div>
+        <div id="lp-new-s2" class="lp-step"><div class="lp-step-num">2</div><div class="lp-step-label">Xem lại</div></div>
+        <div style="flex:1;height:2px;background:rgba(255,255,255,.2);border-radius:2px;"></div>
+        <div id="lp-new-s3" class="lp-step"><div class="lp-step-num">3</div><div class="lp-step-label">Xong</div></div>
+      </div>
+
+      <!-- Step 1: Form -->
+      <div id="lp-new-form">
+        <div style="font-weight:800;font-size:15px;color:#fff;margin-bottom:4px;">📋 Yêu cầu cấp tài khoản mới</div>
+        <div style="font-size:11.5px;color:rgba(255,255,255,.55);margin-bottom:14px;">Dành cho nhân viên y tế chưa có tài khoản</div>
+
+        <div class="login-form-group">
+          <label class="login-label">Họ và tên đầy đủ <span style="color:#FF5252">*</span></label>
+          <input type="text" class="login-input" id="lp-new-fullname" placeholder="VD: Nguyễn Văn An" oninput="lpAutoUsername(this.value)"/>
+          <div id="lp-new-fullname-hint" style="font-size:11px;color:rgba(255,255,255,.45);margin-top:3px;display:none;"></div>
+        </div>
+        <div class="login-form-group">
+          <label class="login-label">Tên đăng nhập mong muốn <span style="color:#FF5252">*</span></label>
+          <div style="position:relative;">
+            <input type="text" class="login-input" id="lp-new-username" placeholder="VD: an_nv" oninput="lpValidateUsername(this.value,'new')" style="padding-right:36px;"/>
+            <span id="lp-new-uname-ok" style="display:none;position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#A5D6A7;font-size:16px;">✓</span>
+          </div>
+          <div id="lp-new-uname-hint" style="font-size:11px;color:rgba(255,255,255,.45);margin-top:3px;">Chỉ dùng chữ thường, số, dấu gạch dưới (_). Tối thiểu 4 ký tự.</div>
+        </div>
+        <div class="login-form-group">
+          <label class="login-label">Số điện thoại / Email liên hệ <span style="color:#FF5252">*</span></label>
+          <input type="text" class="login-input" id="lp-new-contact" placeholder="0901234567 hoặc email" oninput="lpValidateContact(this.value,'new')"/>
+          <div id="lp-new-contact-hint" style="font-size:11px;margin-top:3px;display:none;"></div>
+        </div>
+        <div class="login-form-group">
+          <label class="login-label">Khoa/Phòng công tác</label>
+          <input type="text" class="login-input" id="lp-new-dept" placeholder="Nhập hoặc chọn khoa/phòng..." list="lp-new-dept-list"/>
+          <datalist id="lp-new-dept-list"></datalist>
+        </div>
+        <div class="login-form-group">
+          <label class="login-label">Mức độ ưu tiên</label>
+          <div style="display:flex;gap:8px;margin-top:4px;">
+            <label id="lp-new-urg-n" style="flex:1;border:1.5px solid rgba(165,214,167,.7);border-radius:8px;padding:8px;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12.5px;">
+              <input type="radio" name="lp-new-urgency" value="normal" checked onchange="lpUrgencyChange('new','normal')"/> 🟢 Bình thường
+            </label>
+            <label id="lp-new-urg-u" style="flex:1;border:1.5px solid rgba(255,255,255,.15);border-radius:8px;padding:8px;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12.5px;">
+              <input type="radio" name="lp-new-urgency" value="urgent" onchange="lpUrgencyChange('new','urgent')"/> 🔴 Gấp / Khẩn
+            </label>
+          </div>
+        </div>
+        <div class="login-form-group">
+          <label class="login-label">Lý do / Ghi chú thêm <span style="font-size:11px;color:rgba(255,255,255,.4);">(không bắt buộc)</span></label>
+          <textarea class="login-input" id="lp-new-note" rows="2" placeholder="VD: Tôi là điều dưỡng khoa Nội, cần nhập phiếu khảo sát..." style="resize:none;" oninput="lpCountNote(this,'lp-new-note-ct',300)"></textarea>
+          <div id="lp-new-note-ct" style="font-size:10.5px;color:rgba(255,255,255,.35);text-align:right;margin-top:2px;">0/300</div>
+        </div>
+        <div id="lp-new-err" style="display:none;background:rgba(229,57,53,.18);color:#FF5252;padding:9px 12px;border-radius:8px;font-size:12.5px;margin-bottom:10px;border:1px solid rgba(229,57,53,.35);"></div>
+        <div style="display:flex;gap:8px;">
+          <button class="login-btn" style="background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:1.5px solid rgba(255,255,255,.2);flex:1;padding:11px;font-size:13px;" onclick="loginPanelBack()">← Quay lại</button>
+          <button class="login-btn login-btn-primary" style="flex:2;padding:11px;" onclick="lpStep1Next('new')">Xem lại →</button>
+        </div>
+      </div>
+
+      <!-- Step 2: Preview -->
+      <div id="lp-new-preview" style="display:none;">
+        <div id="lp-new-preview-body" style="color:rgba(255,255,255,.85);font-size:13px;"></div>
+        <div style="display:flex;gap:8px;margin-top:14px;">
+          <button class="login-btn" style="background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:1.5px solid rgba(255,255,255,.2);flex:1;padding:11px;font-size:13px;" onclick="lpPreviewBack('new')">← Sửa lại</button>
+          <button class="login-btn" style="background:#2E7D32;color:#fff;border:none;flex:2;padding:11px;font-size:13px;font-weight:700;" onclick="lpConfirmSubmit('new')">📤 Xác nhận gửi</button>
+        </div>
+      </div>
+
+      <!-- Step 3: Done -->
+      <div id="lp-new-done" style="display:none;text-align:center;">
+        <div style="font-size:44px;margin-bottom:12px;">✅</div>
+        <div style="font-weight:800;font-size:16px;color:#A5D6A7;margin-bottom:8px;">Đã gửi yêu cầu thành công!</div>
+        <div id="lp-new-done-msg" style="font-size:12.5px;color:rgba(255,255,255,.7);margin-bottom:16px;line-height:1.6;"></div>
+        <div style="padding:10px 14px;background:rgba(255,255,255,.08);border-radius:8px;font-size:11.5px;color:rgba(255,255,255,.6);margin-bottom:16px;">
+          ⏳ Admin sẽ tạo tài khoản và liên hệ lại cho bạn.<br>Mật khẩu mặc định ban đầu là <b style="color:#90CAF9;">BV@2024</b>
+        </div>
+        <button class="login-btn login-btn-primary" onclick="loginPanelBack()">← Quay về đăng nhập</button>
+      </div>
+    </div>
+
+    <!-- ★ LOGIN PANEL: Quên mật khẩu / Reset (hiển thị IN-PLACE, ẩn theo mặc định) -->
+    <div id="lp-reset" style="display:none;">
+      <!-- Step indicators -->
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:16px;justify-content:center;">
+        <div id="lp-reset-s1" class="lp-step lp-step-active lp-step-orange"><div class="lp-step-num lp-step-num-orange">1</div><div class="lp-step-label">Thông tin</div></div>
+        <div style="flex:1;height:2px;background:rgba(255,255,255,.2);border-radius:2px;"></div>
+        <div id="lp-reset-s2" class="lp-step"><div class="lp-step-num">2</div><div class="lp-step-label">Xem lại</div></div>
+        <div style="flex:1;height:2px;background:rgba(255,255,255,.2);border-radius:2px;"></div>
+        <div id="lp-reset-s3" class="lp-step"><div class="lp-step-num">3</div><div class="lp-step-label">Xong</div></div>
+      </div>
+
+      <!-- Step 1: Form -->
+      <div id="lp-reset-form">
+        <div style="font-weight:800;font-size:15px;color:#FFCC80;margin-bottom:4px;">🔑 Quên mật khẩu</div>
+        <div style="font-size:11.5px;color:rgba(255,255,255,.55);margin-bottom:14px;">Admin sẽ cấp mật khẩu tạm thời <b style="color:#FFCC80;">BV@2024</b></div>
+
+        <div class="login-form-group">
+          <label class="login-label">Họ và tên đầy đủ <span style="color:#FF5252">*</span></label>
+          <input type="text" class="login-input" id="lp-reset-fullname" placeholder="VD: Nguyễn Văn An"/>
+        </div>
+        <div class="login-form-group">
+          <label class="login-label">Tên đăng nhập của bạn <span style="color:#FF5252">*</span></label>
+          <div style="position:relative;">
+            <input type="text" class="login-input" id="lp-reset-username" placeholder="Tên đăng nhập đã được cấp" oninput="lpValidateUsername(this.value,'reset')" style="padding-right:36px;"/>
+            <span id="lp-reset-uname-ok" style="display:none;position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#A5D6A7;font-size:16px;">✓</span>
+          </div>
+          <div id="lp-reset-uname-hint" style="font-size:11px;color:rgba(255,255,255,.45);margin-top:3px;">Nhập chính xác tên đăng nhập đã được cấp.</div>
+        </div>
+        <div class="login-form-group">
+          <label class="login-label">Số điện thoại / Email liên hệ <span style="color:#FF5252">*</span></label>
+          <input type="text" class="login-input" id="lp-reset-contact" placeholder="0901234567 hoặc email" oninput="lpValidateContact(this.value,'reset')"/>
+          <div id="lp-reset-contact-hint" style="font-size:11px;margin-top:3px;display:none;"></div>
+        </div>
+        <div class="login-form-group">
+          <label class="login-label">Ghi chú thêm <span style="font-size:11px;color:rgba(255,255,255,.4);">(không bắt buộc)</span></label>
+          <textarea class="login-input" id="lp-reset-note" rows="2" placeholder="VD: Tôi quên mật khẩu sau kỳ nghỉ lễ..." style="resize:none;" oninput="lpCountNote(this,'lp-reset-note-ct',200)"></textarea>
+          <div id="lp-reset-note-ct" style="font-size:10.5px;color:rgba(255,255,255,.35);text-align:right;margin-top:2px;">0/200</div>
+        </div>
+        <div id="lp-reset-err" style="display:none;background:rgba(229,57,53,.18);color:#FF5252;padding:9px 12px;border-radius:8px;font-size:12.5px;margin-bottom:10px;border:1px solid rgba(229,57,53,.35);"></div>
+        <div style="display:flex;gap:8px;">
+          <button class="login-btn" style="background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:1.5px solid rgba(255,255,255,.2);flex:1;padding:11px;font-size:13px;" onclick="loginPanelBack()">← Quay lại</button>
+          <button class="login-btn" style="background:#E65100;color:#fff;border:none;flex:2;padding:11px;font-size:13px;font-weight:700;" onclick="lpStep1Next('reset')">Xem lại →</button>
+        </div>
+      </div>
+
+      <!-- Step 2: Preview -->
+      <div id="lp-reset-preview" style="display:none;">
+        <div id="lp-reset-preview-body" style="color:rgba(255,255,255,.85);font-size:13px;"></div>
+        <div style="display:flex;gap:8px;margin-top:14px;">
+          <button class="login-btn" style="background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:1.5px solid rgba(255,255,255,.2);flex:1;padding:11px;font-size:13px;" onclick="lpPreviewBack('reset')">← Sửa lại</button>
+          <button class="login-btn" style="background:#E65100;color:#fff;border:none;flex:2;padding:11px;font-size:13px;font-weight:700;" onclick="lpConfirmSubmit('reset')">📤 Xác nhận gửi</button>
+        </div>
+      </div>
+
+      <!-- Step 3: Done -->
+      <div id="lp-reset-done" style="display:none;text-align:center;">
+        <div style="font-size:44px;margin-bottom:12px;">✅</div>
+        <div style="font-weight:800;font-size:16px;color:#FFCC80;margin-bottom:8px;">Đã gửi yêu cầu thành công!</div>
+        <div id="lp-reset-done-msg" style="font-size:12.5px;color:rgba(255,255,255,.7);margin-bottom:16px;line-height:1.6;"></div>
+        <div style="padding:10px 14px;background:rgba(255,255,255,.08);border-radius:8px;font-size:11.5px;color:rgba(255,255,255,.6);margin-bottom:16px;">
+          ⏳ Admin sẽ reset mật khẩu tài khoản của bạn về <b style="color:#FFCC80;">BV@2024</b>.<br>Đổi mật khẩu ngay sau khi đăng nhập.
+        </div>
+        <button class="login-btn" style="background:#E65100;color:#fff;border:none;width:100%;padding:11px;font-size:13px;font-weight:700;" onclick="loginPanelBack()">← Quay về đăng nhập</button>
       </div>
     </div>
 
@@ -385,7 +539,6 @@
             <span class="byt-status-dot orange" id="byt-dot"></span>
             <span id="byt-login-msg">Nhấn "Kiểm tra" để xác minh trạng thái đăng nhập trang BYT...</span>
           </div>
-          <div id="byt-cfg-status-upload" style="font-size:12px;padding:8px 12px;margin-bottom:10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);">⏳ Đang kiểm tra cấu hình...</div>
           <div class="warn-box" style="font-size:12px;">
             ⚠️ <b>Cách hoạt động:</b> Hệ thống mở trang BYT trong tab mới, kiểm tra trạng thái đăng nhập. Nếu chưa đăng nhập sẽ tự động điền tài khoản BYT đã cấu hình để đăng nhập trước khi gửi phiếu.<br>
             <b>Yêu cầu:</b> Tài khoản BYT phải được cấu hình tại <a href="#" onclick="showPage('settings');return false" style="color:var(--primary)">Cấu hình hệ thống</a>. Trình duyệt cần cho phép mở tab mới.
@@ -447,11 +600,43 @@
       <!-- Upload log -->
       <div class="card" id="byt-log-card" style="display:none">
         <div class="card-header">
-          <div class="card-title">📜 Nhật ký gửi phiếu lên BYT</div>
-          <button class="btn btn-outline btn-sm" onclick="clearBYTLog()">🗑️ Xóa log</button>
+          <div class="card-title">📜 Nhật ký gửi phiếu / Kết quả test</div>
+          <div class="flex-gap">
+            <button class="btn btn-outline btn-sm" onclick="bytShowTestReport()">📊 Báo cáo test</button>
+            <button class="btn btn-outline btn-sm" onclick="clearBYTLog()">🗑️ Xóa log</button>
+          </div>
         </div>
         <div class="card-body">
           <div class="upload-log-box" id="byt-upload-log"></div>
+        </div>
+      </div>
+
+      <!-- Test Suite Card -->
+      <div class="card mt-14" id="byt-test-card">
+        <div class="card-header">
+          <div class="card-title">🧪 Test Suite v9.0 – Kiểm tra module gửi BYT</div>
+          <span style="font-size:11px;color:var(--text3);font-weight:400;">20 test cases | Unit + Integration</span>
+        </div>
+        <div class="card-body">
+          <div class="warn-box" style="font-size:12px;margin-bottom:10px;">
+            ℹ️ Chạy test để xác minh field mapping, inject script và data validation trước khi gửi phiếu thật. Không cần kết nối mạng hay đăng nhập BYT.
+          </div>
+          <div class="flex-gap" style="flex-wrap:wrap;gap:8px;">
+            <button class="btn btn-accent" onclick="bytRunAllTests()">▶️ Chạy tất cả (TC-01→TC-20)</button>
+            <button class="btn btn-outline btn-sm" onclick="bytRunTest('TC-01')">TC-01</button>
+            <button class="btn btn-outline btn-sm" onclick="bytRunTest('TC-06')">TC-06 M5✓</button>
+            <button class="btn btn-outline btn-sm" onclick="bytRunTest('TC-13')">TC-13 M4✓</button>
+            <button class="btn btn-outline btn-sm" onclick="bytRunTest('TC-20')">TC-20 M3✓</button>
+            <button class="btn btn-outline btn-sm" onclick="bytShowTestReport()">📊 Báo cáo</button>
+          </div>
+          <div style="margin-top:12px;">
+            <div style="font-size:11px;color:var(--text3);font-weight:600;margin-bottom:6px;">CHẠY TỪNG NHÓM:</div>
+            <div class="flex-gap" style="flex-wrap:wrap;gap:6px;">
+              <button class="btn btn-outline btn-xs" onclick="(async()=>{const logCard=document.getElementById('byt-log-card');if(logCard)logCard.style.display='';clearBYTLog();addBYTLog('info','── Unit: Field Mapping ──');for(const id of ['TC-01','TC-02','TC-03','TC-04','TC-05','TC-06','TC-07','TC-08','TC-09'])await bytRunTest(id);})()">Unit: Field Mapping (TC-01→09)</button>
+              <button class="btn btn-outline btn-xs" onclick="(async()=>{const logCard=document.getElementById('byt-log-card');if(logCard)logCard.style.display='';clearBYTLog();addBYTLog('info','── Unit: Inject Script ──');for(const id of ['TC-10','TC-11','TC-12','TC-13','TC-14','TC-15'])await bytRunTest(id);})()">Unit: Inject Script (TC-10→15)</button>
+              <button class="btn btn-outline btn-xs" onclick="(async()=>{const logCard=document.getElementById('byt-log-card');if(logCard)logCard.style.display='';clearBYTLog();addBYTLog('info','── Integration ──');for(const id of ['TC-16','TC-17','TC-18','TC-19','TC-20'])await bytRunTest(id);})()">Integration (TC-16→20)</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -700,34 +885,11 @@
             <div class="form-group mb-14"><label class="form-label">Tên bệnh viện</label><input type="text" class="form-input" id="cfg-hvname" placeholder="Bệnh viện..."/></div>
             <div class="form-group mb-14"><label class="form-label">Tỉnh/Thành phố</label><input type="text" class="form-input" id="cfg-province" placeholder="Đồng Nai"/></div>
             <div class="form-group mb-14"><label class="form-label">Hạng bệnh viện</label><select class="form-select" id="cfg-hang"><option value="">--Chọn--</option><option>Hạng đặc biệt</option><option>Hạng I</option><option>Hạng II</option><option>Hạng III</option><option>Không xếp hạng</option></select></div>
+            <div class="form-group mb-14"><label class="form-label">Mã bệnh viện (BYT) <span style="font-size:10px;color:var(--text3);">– dùng khi gửi phiếu lên hệ thống BYT</span></label><input type="text" class="form-input" id="cfg-mabv" placeholder="VD: 12345"/></div>
             <div class="divider"></div>
             <div class="settings-sec-title">Tài khoản BYT (hailong.chatluongbenhvien.vn)</div>
             <div class="form-group mb-14"><label class="form-label">Tên đăng nhập</label><input type="text" class="form-input" id="cfg-bytuser" placeholder="username..."/></div>
             <div class="form-group mb-14"><label class="form-label">Mật khẩu</label><input type="password" class="form-input" id="cfg-bytpass" placeholder="••••••••"/><div style="font-size:10px;color:#E65100;margin-top:2px;">⚠️ Mã hoá và lưu trên Sheets</div></div>
-            <div class="form-group mb-14"><label class="form-label">Mã BV trong select BYT (mabv) <span style="color:var(--accent2);font-size:10px;">★ BẮT BUỘC – BUG-05 FIX</span></label><input type="text" class="form-input" id="cfg-mabv" placeholder="VD: 62310"/><div style="font-size:10px;color:var(--accent2);margin-top:2px;">⚠️ QUAN TRỌNG: Đây là giá trị <b>value</b> (mã số) của option trong dropdown "Tên bệnh viện" trên trang BYT, <b>không phải tên BV</b>. Xem page source → tìm select[name="submitted[ttp][bvn][1_ten_benh_vien]"] → lấy value. Bắt buộc phải có để gửi phiếu thành công.</div></div>
-            <div class="form-group mb-14"><label class="form-label">ID bệnh viện trong select BYT (bvid)</label><input type="text" class="form-input" id="cfg-bvid" placeholder="VD: 62310"/><div style="font-size:10px;color:var(--text3);margin-top:2px;">Giá trị option value của BV trong dropdown &lt;select&gt; trên trang BYT (thường là số, xem trang noi_tru.html để lấy)</div></div>
-            <div class="form-group mb-14"><label class="form-label">ID khoa/phòng trong select BYT (khoaId) <span style="color:var(--accent2);font-size:10px;">⚠️ BUG-06 FIX</span></label><input type="text" class="form-input" id="cfg-khoaid" placeholder="VD: 123163"/><div style="font-size:10px;color:var(--text3);margin-top:2px;">Mã số khoa trong dropdown &lt;select name="submitted[ttp][kmk][khoa_phong]"&gt; – xem page source trang BYT để lấy đúng value. Nếu để trống, trường khoa sẽ bỏ qua (không bắt buộc).</div></div>
-            <div class="form-group mb-14"><label class="form-label">Kiểu khảo sát mặc định</label>
-              <select class="form-select" id="cfg-byt-kieu">
-                <option value="1">1. Bệnh viện tự đánh giá hàng tháng/quý</option>
-                <option value="2">2. Bệnh viện tự đánh giá cuối năm</option>
-                <option value="3">3. Do đoàn Bộ Y tế/Sở Y tế thực hiện</option>
-                <option value="4">4. Do đoàn phúc tra của BYT thực hiện</option>
-                <option value="5">5. Do đoàn kiểm tra chéo</option>
-                <option value="6">6. Hình thức khác</option>
-              </select>
-            </div>
-            <div class="form-group mb-14"><label class="form-label">Người phỏng vấn/điền phiếu mặc định</label>
-              <select class="form-select" id="cfg-byt-nguoipv">
-                <option value="1">a. Người bệnh tự điền (hoặc người nhà)</option>
-                <option value="2">b. Nhân viên của bệnh viện</option>
-                <option value="3">c. Bộ Y tế/Sở Y tế hoặc đoàn giám sát</option>
-                <option value="4">d. Tổ chức độc lập</option>
-                <option value="5">e. Đối tượng khác</option>
-              </select>
-            </div>
-            <div class="form-group mb-14"><label class="form-label">Tên/Mã người điền (nguoiks – tuỳ chọn)</label><input type="text" class="form-input" id="cfg-byt-nguoiks" placeholder="VD: Phòng QLCL"/></div>
-            <div id="byt-cfg-status" style="font-size:12px;margin-top:4px;"></div>
             <div class="divider"></div>
             <div class="settings-sec-title">Tự động gửi phiếu lên BYT</div>
             <div class="form-group mb-14" style="flex-direction:row;align-items:center;gap:10px;">

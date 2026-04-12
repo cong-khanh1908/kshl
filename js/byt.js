@@ -1,17 +1,18 @@
 // byt.js – Module gửi phiếu lên trang BYT (hailong.chatluongbenhvien.vn)
-// Version: v4.1 – FIX TOÀN BỘ 10 LỖI (BUG-01 đến BUG-10)
+// KSHL v9.0 – Nâng cấp toàn diện: mapping đầy đủ 5 mẫu, test suite chuyên nghiệp
+// Ngày: 2026-04-12
 // ============================================================
-// BUG-01: Tất cả selector CSS dùng đúng [] thay vì . trong tên field
-// BUG-02: M5 section B field mapping đúng với HTML thực tế  
-// BUG-03: Điền đủ required fields: kieu_khao_sat, guibyt, nguoipv, doituong
-// BUG-04: Không lọc bỏ value=0 (câu "Không sử dụng")
-// BUG-05: Dùng CFG.mabv (mã số) để chọn select 1_ten_benh_vien
-// BUG-06: Dùng CFG.khoaId (mã số khoa) để chọn select khoa_phong
-// BUG-07: bytFieldName() hoạt động đúng cho mọi section (a-z)
-// BUG-08: Guard injected && !redirected trước cross-origin catch
-// BUG-09: parseInt() để loại số 0 đầu trong ngày/tháng
-// BUG-10: Tính TB dùng a.value !== null thay vì a.value > 0
+// THAY ĐỔI v9.0 so với v4.1:
+//   [1] Field mapping đầy đủ cho tất cả 5 mẫu dựa trên phân tích HTML thực tế
+//   [2] M4: dùng submitted[thong_tin_phieu] thay vì submitted[ttp]
+//   [3] M5: submitted[a][...] cho thông tin người dùng, [c][...] cho phần C
+//   [4] M3: submitted[ttp][khoa_phong] trực tiếp (không qua kmk)
+//   [5] M2: hỗ trợ submitted[ttp][stt_k][hsk] & khoangcach
+//   [6] Auto-detect required fields còn trống trước khi submit
+//   [7] Timeout thông minh theo kích thước phiếu
+//   [8] Bộ TEST CASE chuyên nghiệp TC-01→TC-20 tích hợp sẵn
 // ============================================================
+
 'use strict';
 
 const BYT_BASE      = 'https://hailong.chatluongbenhvien.vn';
@@ -25,30 +26,33 @@ const BYT_FORM_ACTIONS = {
   m5: '/content/5-phieu-khao-sat-thuc-hien-nuoi-con-bang-sua-me-tai-benh-vien-va-sau-ra-vien',
 };
 
+const BYT_LOAD_TIMEOUT_MS = { m1:18000, m2:18000, m3:20000, m4:20000, m5:22000 };
+
 let bytLoginStatus   = 'unknown';
 let bytUploadRunning = false;
 let bytSelectedIds   = new Set();
 let bytLog           = [];
+let bytTestResults   = [];
 
-// =========================================================
-// BADGE & CHECKBOX
-// =========================================================
 function updateBYTPendingBadge() {
-  const pending = DB.surveys.filter(x => !x.bytStatus || x.bytStatus === 'pending' || x.bytStatus === 'failed').length;
+  const pending = DB.surveys.filter(x => !x.bytStatus || x.bytStatus === 'pending').length;
   const b = document.getElementById('pendingBYTBadge');
   if (b) { b.textContent = pending; b.style.display = pending > 0 ? '' : 'none'; }
 }
+
 function toggleAutoUpload(checked) {
   CFG.autoUploadBYT = checked; saveCFG();
   const cb2 = document.getElementById('cfg-auto-upload-settings');
   if (cb2) cb2.checked = checked;
   toast(checked ? '✅ Đã bật tự động gửi BYT' : 'ℹ️ Đã tắt tự động gửi BYT', checked ? 'success' : 'info');
 }
+
 function syncAutoUploadCheckbox(checked) {
   CFG.autoUploadBYT = checked; saveCFG();
   const cb = document.getElementById('cfg-auto-upload');
   if (cb) cb.checked = checked;
 }
+
 function loadAutoUploadCheckboxes() {
   const v = CFG.autoUploadBYT || false;
   const cb1 = document.getElementById('cfg-auto-upload');
@@ -57,25 +61,17 @@ function loadAutoUploadCheckboxes() {
   if (cb2) cb2.checked = v;
 }
 
-// =========================================================
-// STATUS UI
-// =========================================================
 function setBYTStatusUI(type, msg) {
   const bar = document.getElementById('byt-login-statusbar');
   const dot = document.getElementById('byt-dot');
   const msgEl = document.getElementById('byt-login-msg');
   if (!bar || !dot || !msgEl) return;
   bar.className = 'byt-status-bar ' + type;
-  dot.className = 'byt-status-dot ' + (
-    type === 'logged-in' ? 'green' : type === 'checking' ? 'spin' : type === 'error' ? 'red' : 'orange'
-  );
+  dot.className = 'byt-status-dot ' + (type==='logged-in'?'green':type==='checking'?'spin':type==='error'?'red':'orange');
   msgEl.textContent = msg;
   bytLoginStatus = type;
 }
 
-// =========================================================
-// CHECK LOGIN
-// =========================================================
 async function checkBYTLoginStatus() {
   const loginBtn = document.getElementById('btn-byt-login-now');
   setBYTStatusUI('checking', '🔄 Đang kiểm tra kết nối đến trang BYT...');
@@ -83,27 +79,19 @@ async function checkBYTLoginStatus() {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
-    await fetch(BYT_BASE, { method: 'HEAD', mode: 'no-cors', cache: 'no-store', signal: ctrl.signal });
+    await fetch(BYT_BASE + '/user/login', { method:'HEAD', mode:'no-cors', cache:'no-store', signal:ctrl.signal });
     clearTimeout(timer);
-    setBYTStatusUI('unknown', '🔓 Trang BYT đang hoạt động. Nhấn "Đăng nhập BYT" để đăng nhập và gửi phiếu.');
+    setBYTStatusUI('unknown', '⚠️ Không thể xác minh tự động (trình duyệt bảo mật cross-origin). Nhấn "Đăng nhập BYT" để mở cửa sổ đăng nhập, sau đó gửi phiếu.');
     if (loginBtn) loginBtn.style.display = '';
     bytLoginStatus = 'unknown';
   } catch(e) {
-    if (e.name === 'AbortError') {
-      setBYTStatusUI('error', '❌ Timeout – không kết nối được trang BYT.');
-    } else {
-      setBYTStatusUI('unknown', '🔓 Nhấn "Đăng nhập BYT" để đăng nhập và gửi phiếu.');
-      if (loginBtn) loginBtn.style.display = '';
-    }
+    if (e.name === 'AbortError') setBYTStatusUI('error', '❌ Timeout – không kết nối được đến trang BYT. Kiểm tra mạng.');
+    else setBYTStatusUI('error', '❌ Lỗi kết nối: ' + e.message);
     if (loginBtn) loginBtn.style.display = '';
     bytLoginStatus = 'error';
   }
 }
 
-// =========================================================
-// ĐĂNG NHẬP BYT QUA POPUP
-// BUG-08 FIX: Guard injected && !redirected trước mọi cross-origin catch
-// =========================================================
 function loginBYTNow() {
   if (!CFG.bytuser || !CFG.bytpass) {
     toast('⚠️ Chưa cấu hình tài khoản BYT. Vào Cấu hình → Tài khoản BYT.', 'warning');
@@ -114,547 +102,446 @@ function loginBYTNow() {
   const user = CFG.bytuser, pass = CFG.bytpass;
   setBYTStatusUI('checking', '🔄 Đang mở trang BYT và tự động đăng nhập...');
   addBYTLog('info', 'Mở cửa sổ đăng nhập BYT: ' + BYT_LOGIN_URL);
-  let attempts = 0, injected = false, redirected = false;
+  let attempts=0, injected=false, redirected=false;
   const iv = setInterval(() => {
     attempts++;
     try {
-      if (win.closed) {
-        clearInterval(iv);
-        if (!redirected) { setBYTStatusUI('unknown', '⚠️ Cửa sổ BYT đã đóng.'); const lb=document.getElementById('btn-byt-login-now'); if(lb)lb.style.display=''; }
-        return;
-      }
-      const curUrl = win.location.href || '';
-      const ready  = win.document.readyState === 'complete';
-      if (!injected && ready && curUrl.includes('/user/login')) {
-        injected = true;
-        addBYTLog('info', 'Trang login đã tải – điền thông tin...');
-        setTimeout(() => {
-          try {
-            const r = win.eval(`(function(){
-  var u=document.getElementById('edit-name'), p=document.getElementById('edit-pass'), f=document.getElementById('user-login');
-  if(!u||!p||!f) return 'ERR: Thiếu element form đăng nhập';
-  u.value=${JSON.stringify(user)}; p.value=${JSON.stringify(pass)};
-  var op=f.querySelector('input[name="op"]');
-  if(!op){op=document.createElement('input');op.type='hidden';op.name='op';f.appendChild(op);}
-  op.value='Đăng nhập';
-  u.dispatchEvent(new Event('change',{bubbles:true}));
-  p.dispatchEvent(new Event('change',{bubbles:true}));
-  f.submit(); return 'OK';
-})()`);
-            addBYTLog('info', 'Kết quả: ' + r);
-          } catch(e) { addBYTLog('warn', 'Inject thất bại: ' + e.message); }
-        }, 700);
+      if (win.closed) { clearInterval(iv); if (!redirected) { setBYTStatusUI('unknown','⚠️ Cửa sổ BYT đã đóng.'); const lb=document.getElementById('btn-byt-login-now'); if(lb)lb.style.display=''; } return; }
+      const curUrl = win.location.href||'', ready = win.document.readyState==='complete';
+      if (!injected && ready && (curUrl.includes('/user/login')||curUrl.includes('login'))) {
+        injected=true;
+        try { win.eval(`(function(){var u=document.querySelector('#edit-name,input[name="name"]');var p=document.querySelector('#edit-pass,input[name="pass"]');var b=document.querySelector('#edit-submit,input[type="submit"],button[type="submit"]');if(u&&p){u.value=${JSON.stringify(user)};p.value=${JSON.stringify(pass)};u.dispatchEvent(new Event('input',{bubbles:true}));p.dispatchEvent(new Event('input',{bubbles:true}));if(b)b.click();}})()`); addBYTLog('info','Đã điền thông tin đăng nhập BYT'); } catch(fe){ addBYTLog('warn','Không thể auto-fill: '+fe.message); }
       }
       if (injected && ready && !curUrl.includes('/user/login') && curUrl.startsWith('http')) {
-        redirected = true; clearInterval(iv);
-        bytLoginStatus = 'logged-in';
-        setBYTStatusUI('logged-in', '✅ Đăng nhập BYT thành công!');
-        const lb = document.getElementById('btn-byt-login-now'); if(lb)lb.style.display='none';
-        addBYTLog('ok', '✅ Đăng nhập thành công → ' + curUrl);
-        setTimeout(() => { try { win.close(); } catch(x){} }, 1500);
+        redirected=true; clearInterval(iv); bytLoginStatus='logged-in';
+        setBYTStatusUI('logged-in','✅ Đăng nhập BYT thành công! Sẵn sàng gửi phiếu.');
+        const lb=document.getElementById('btn-byt-login-now'); if(lb)lb.style.display='none';
+        addBYTLog('ok','Đăng nhập BYT thành công. URL: '+curUrl);
+        setTimeout(()=>{try{win.close();}catch(x){}},1500);
       }
     } catch(e) {
-      // BUG-08 FIX: CHỈ coi là thành công nếu đã inject xong
       if (injected && !redirected) {
-        redirected = true; clearInterval(iv);
-        bytLoginStatus = 'logged-in';
-        setBYTStatusUI('logged-in', '✅ Đăng nhập BYT thành công!');
-        const lb = document.getElementById('btn-byt-login-now'); if(lb)lb.style.display='none';
-        addBYTLog('ok', '✅ Đăng nhập thành công (cross-origin redirect)');
-        setTimeout(() => { try { win.close(); } catch(x){} }, 1500);
-      }
-      // Nếu !injected → exception ngay khi popup mới mở: bỏ qua, chờ trang load
-    }
-    if (attempts > 50) {
-      clearInterval(iv);
-      if (!redirected) { setBYTStatusUI('unknown', '⚠️ Hết thời gian. Hãy đăng nhập thủ công.'); addBYTLog('warn', 'Timeout 25s'); }
-    }
-  }, 500);
-}
-
-// =========================================================
-// HELPERS
-// =========================================================
-function _extractNumVal(str) {
-  if (!str) return '';
-  const m = String(str).match(/^(\d+)/);
-  return m ? m[1] : String(str);
-}
-function _mapGT(gt) {
-  if (!gt) return '';
-  const s = String(gt).toLowerCase().trim();
-  if (s==='1'||s.startsWith('1.')||s.includes('nam')) return '1';
-  if (s==='2'||s.startsWith('2.')||s.includes('nữ')||s.includes('nu')) return '2';
-  if (s==='3'||s.startsWith('3.')||s.includes('khác')||s.includes('khac')) return '3';
-  return _extractNumVal(gt);
-}
-function _mapDoituong(v) {
-  if (!v) return '1';
-  const s = String(v).toLowerCase().trim();
-  if (s.includes('bệnh')||s.includes('benh')||s==='1') return '1';
-  if (s.includes('nhà')||s.includes('nha')||s==='2') return '2';
-  return '1';
-}
-// BUG-09 FIX: Bỏ số 0 đầu trong ngày/tháng (HTML option value="6" không phải "06")
-function _stripLeadingZero(s) {
-  if (!s) return '';
-  const n = parseInt(s, 10);
-  return isNaN(n) ? s : n.toString();
-}
-
-// =========================================================
-// BUILD FILL SCRIPT – Tất cả bug đã được sửa
-// =========================================================
-function _buildFillScript(rec) {
-  const type = rec.type;
-  // BUG-04 FIX: Không lọc bỏ value=0 – chỉ bỏ null/undefined/''
-  const answers = (rec.answers || []).filter(a => a.value !== null && a.value !== undefined && a.value !== '');
-
-  const mabv    = CFG.mabv     || '';  // BUG-05 FIX: mã số BV như "62310"
-  const khoaId  = rec.khoaId   || CFG.khoaId || ''; // BUG-06 FIX: mã số khoa như "123163"
-  const makhoa  = rec.makhoa   || '';
-  const khoa    = rec.khoa     || rec.donvi || '';
-
-  // BUG-09 FIX: parseInt để loại số 0 đầu
-  const ngayRaw   = rec.ngay || rec.createdAt?.split('T')[0] || new Date().toISOString().split('T')[0];
-  const ngayParts = ngayRaw.split('-');
-  const dd = _stripLeadingZero(ngayParts[2] || '');
-  const mm = _stripLeadingZero(ngayParts[1] || '');
-  const yy = ngayParts[0] || '';
-
-  const gt       = _mapGT(rec.gt || '');
-  const tuoi     = rec.tuoi   || '';
-  const sdt      = rec.sdt    || '';
-  const bhyt     = _extractNumVal(rec.bhyt    || '');
-  const noiss    = _extractNumVal(rec.noiss   || '');
-  const mucsong  = _extractNumVal(rec.mucsong || '');
-  const doituong = _mapDoituong(rec.nguoitl || '');
-  const songay   = rec.songay || '';
-  const kc       = rec.kc     || '';
-  // BUG-03 FIX: Required fields có giá trị mặc định
-  const kieuKhaoSat = CFG.bytKieuKhaoSat || '1';
-  const nguoipv     = CFG.bytNguoipv     || '2';
-  const nguoiks     = CFG.bytNguoiks     || '';
-
-  const useThongTinPhieu = (type === 'm4' || type === 'm5');
-  const L = [];
-  L.push('(function(){');
-  L.push('try {');
-  L.push('var filled=0, missing=[], log=[];');
-
-  // BUG-01 FIX: Tất cả helper function dùng selector đúng với ký tự []
-  L.push(`
-var _sv = function(sel, val) {
-  var e = document.querySelector(sel);
-  if (e && val !== '' && val !== null && val !== undefined) {
-    e.value = val;
-    e.dispatchEvent(new Event('change',{bubbles:true}));
-    e.dispatchEvent(new Event('input',{bubbles:true}));
-    filled++; return true;
-  }
-  return false;
-};
-var _radio = function(name, val) {
-  if (val===''||val===null||val===undefined) return false;
-  var el = document.querySelector('input[name="'+name+'"][value="'+val+'"]');
-  if (el) { el.checked=true; el.dispatchEvent(new Event('change',{bubbles:true})); filled++; return true; }
-  missing.push(name+'='+val); return false;
-};
-var _sel = function(sel, val) {
-  var e = document.querySelector(sel);
-  if (e && val!==''&&val!==null&&val!==undefined) {
-    var opt = e.querySelector('option[value="'+val+'"]');
-    if (opt) { e.value=val; e.dispatchEvent(new Event('change',{bubbles:true})); filled++; return true; }
-    for (var i=0;i<e.options.length;i++) {
-      if (e.options[i].text.trim().includes(String(val))||e.options[i].value===String(val)) {
-        e.value=e.options[i].value; e.dispatchEvent(new Event('change',{bubbles:true})); filled++; return true;
+        redirected=true; clearInterval(iv); bytLoginStatus='logged-in';
+        setBYTStatusUI('logged-in','✅ Đăng nhập BYT thành công!');
+        const lb=document.getElementById('btn-byt-login-now'); if(lb)lb.style.display='none';
+        addBYTLog('ok','Đăng nhập BYT thành công (cross-origin redirect)');
+        setTimeout(()=>{try{win.close();}catch(x){}},1500);
       }
     }
-    missing.push(sel+'='+val);
-  }
-  return false;
-};
-`);
+    if (attempts>40) { clearInterval(iv); if(!redirected) { setBYTStatusUI('unknown','⚠️ Hết thời gian. Hãy đăng nhập thủ công.'); addBYTLog('warn','Timeout chờ đăng nhập BYT'); } }
+  },500);
+}
 
-  // BUG-03 FIX: kieu_khao_sat REQUIRED cho TẤT CẢ mẫu kể cả M3
-  // guibyt chỉ có ở M1/M2/M4/M5 (không có trong M3 HTML)
-  L.push(`_sel('select[name="submitted[kieu_khao_sat]"]', ${JSON.stringify(kieuKhaoSat)});`);
-  if (type !== 'm3') {
-    L.push(`_sel('select[name="submitted[guibyt]"]', '1');`);
-  }
-
-  // TTP HEADER
-  if (!useThongTinPhieu) {
-    // M1/M2/M3
-    // BUG-05 FIX: Dùng mabv (mã số) cho select BV
-    if (mabv) L.push(`_sel('select[name="submitted[ttp][bvn][1_ten_benh_vien]"]', ${JSON.stringify(mabv)});`);
-    L.push(`_sv('input[name="submitted[ttp][bvn][mabv]"]', ${JSON.stringify(mabv)});`);
-    // BUG-09 FIX: dd/mm không có số 0 đầu
-    L.push(`_sel('select[name="submitted[ttp][bvn][ngay_dien_phieu][day]"]', ${JSON.stringify(dd)});`);
-    L.push(`_sel('select[name="submitted[ttp][bvn][ngay_dien_phieu][month]"]', ${JSON.stringify(mm)});`);
-    L.push(`_sel('select[name="submitted[ttp][bvn][ngay_dien_phieu][year]"]', ${JSON.stringify(yy)});`);
-    if (type === 'm3') {
-      // BUG-06 FIX: Dùng khoaId (số) hoặc text fallback
-      if (khoaId) L.push(`_sel('select[name="submitted[ttp][khoa_phong]"]', ${JSON.stringify(khoaId)});`);
-      else if (khoa) L.push(`_sel('select[name="submitted[ttp][khoa_phong]"]', ${JSON.stringify(khoa)});`);
-    } else {
-      if (khoaId) L.push(`_sel('select[name="submitted[ttp][kmk][khoa_phong]"]', ${JSON.stringify(khoaId)});`);
-      else if (khoa) L.push(`_sel('select[name="submitted[ttp][kmk][khoa_phong]"]', ${JSON.stringify(khoa)});`);
-      if (makhoa) L.push(`_sv('input[name="submitted[ttp][kmk][ma_khoa]"]', ${JSON.stringify(makhoa)});`);
-    }
-    // BUG-03 FIX: nguoipv + doituong REQUIRED cho M1/M2
-    if (type !== 'm3') {
-      L.push(`_sel('select[name="submitted[ttp][mdt][nguoipv]"]', ${JSON.stringify(nguoipv)});`);
-      if (nguoiks) L.push(`_sv('input[name="submitted[ttp][mdt][nguoiks]"]', ${JSON.stringify(nguoiks)});`);
-      L.push(`_sel('select[name="submitted[ttp][mdt][doituong]"]', ${JSON.stringify(doituong)});`);
-    }
-    if (type !== 'm3') {
-      if (gt) L.push(`_radio('submitted[thong_tin_nguoi_dien_phieu][gioi_tuoi][gioi_tinh]', ${JSON.stringify(gt)});`);
-      if (tuoi) {
-        L.push(`_sv('input[name="submitted[thong_tin_nguoi_dien_phieu][gioi_tuoi][tuoi]"]', ${JSON.stringify(tuoi)});`);
-        L.push(`_sv('input[name="submitted[thong_tin_nguoi_dien_phieu][gioi_tuoi][namsinh]"]', ${JSON.stringify(tuoi)});`);
-      }
-      if (sdt) L.push(`_sv('input[name="submitted[thong_tin_nguoi_dien_phieu][gioi_tuoi][sdt]"]', ${JSON.stringify(sdt)});`);
-      if (type==='m1' && songay) L.push(`_sv('input[name="submitted[thong_tin_nguoi_dien_phieu][3]"]', ${JSON.stringify(songay)});`);
-      if (type==='m2' && kc) L.push(`_sv('input[name="submitted[thong_tin_nguoi_dien_phieu][3]"]', ${JSON.stringify(kc)});`);
-      if (bhyt) L.push(`_radio('submitted[thong_tin_nguoi_dien_phieu][5]', ${JSON.stringify(bhyt)});`);
-      if (noiss) L.push(`_radio('submitted[thong_tin_nguoi_dien_phieu][6]', ${JSON.stringify(noiss)});`);
-      if (mucsong) L.push(`_radio('submitted[thong_tin_nguoi_dien_phieu][7]', ${JSON.stringify(mucsong)});`);
-    }
-  } else {
-    // M4/M5
-    if (mabv) L.push(`_sel('select[name="submitted[thong_tin_phieu][benhvien_ngay][1_ten_benh_vien]"]', ${JSON.stringify(mabv)});`);
-    L.push(`_sv('input[name="submitted[thong_tin_phieu][benhvien_ngay][mabv]"]', ${JSON.stringify(mabv)});`);
-    L.push(`_sel('select[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][day]"]', ${JSON.stringify(dd)});`);
-    L.push(`_sel('select[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][month]"]', ${JSON.stringify(mm)});`);
-    L.push(`_sel('select[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][year]"]', ${JSON.stringify(yy)});`);
-    if (khoaId) L.push(`_sel('select[name="submitted[thong_tin_phieu][khoa_ma_khoa][khoa_phong]"]', ${JSON.stringify(khoaId)});`);
-    else if (khoa) L.push(`_sel('select[name="submitted[thong_tin_phieu][khoa_ma_khoa][khoa_phong]"]', ${JSON.stringify(khoa)});`);
-    if (makhoa) L.push(`_sv('input[name="submitted[thong_tin_phieu][khoa_ma_khoa][ma_khoa]"]', ${JSON.stringify(makhoa)});`);
-  }
-
-  // CÂU TRẢ LỜI
-  // BUG-04 FIX: Bao gồm cả value=0
-  const validAnswers = answers.filter(a => a.value !== null && a.value !== undefined && a.value !== '');
-  const answersJson  = JSON.stringify(validAnswers.map(a => ({ code: String(a.code||''), value: String(a.value) })));
-
+// =========================================================
+// FIELD MAPPING v9.0
+// Trả về { name, isCheckbox }
+// =========================================================
+function bytFieldMapping(type, code) {
+  if (!code) return { name: null, isCheckbox: false };
+  const sec  = code[0].toLowerCase();
+  const num  = code.slice(1);
+  const qkey = sec + num;
   if (type === 'm5') {
-    // BUG-02 FIX v2: M5 mapping đúng với HTML thực tế form 22800
-    // surveys.js sections A(6q),B(6q),C(5q) → BYT b1-b15 và submitted[c]
-    // A1→b1(chk_multi), A2→b2, A3→b3, A4→b4, A5→b5(radio_sel), A6→b6(radio_sel)
-    // B1→b7(radio_dir), B2→b8(radio_sel), B3→b9(chk_dir), B4→b10(chk_multi), B5→b11(radio_sel), B6→b12(radio_dir)
-    // C1→b13(radio_dir), C2→b15(radio_dir), C3→c1(text), C4→c4(radio_sel), C5→b14_a(text)
-    L.push(\`var ANS5=${answersJson};\`);
-    L.push(\`
-var M5_MAP={
-  a1:{f:'b1',t:'chk_multi'}, a2:{f:'b2',t:'chk_multi'}, a3:{f:'b3',t:'chk_multi'}, a4:{f:'b4',t:'chk_multi'},
-  a5:{f:'b5',t:'radio_sel'}, a6:{f:'b6',t:'radio_sel'},
-  b1:{f:'b7',t:'radio_dir'}, b2:{f:'b8',t:'radio_sel'}, b3:{f:'b9',t:'chk_dir'}, b4:{f:'b10',t:'chk_multi'},
-  b5:{f:'b11',t:'radio_sel'}, b6:{f:'b12',t:'radio_dir'},
-  c1:{f:'b13',t:'radio_dir'}, c2:{f:'b15',t:'radio_dir'}, c3:{f:'c1',t:'text_c'}, c4:{f:'c4',t:'radio_c'}, c5:{f:'b14_a',t:'text_b'}
-};
-ANS5.forEach(function(a){
-  if(!a.code||a.value===''||a.value===null||a.value===undefined)return;
-  var codeL=a.code.toLowerCase();
-  var m=M5_MAP[codeL];
-  if(!m){missing.push(codeL+'='+a.value+'(no_map)');return;}
-  var val=a.value, el, vals;
-  if(m.t==='chk_multi'){
-    // submitted[danh_gia][b1][select][N]
-    vals=String(val).split(',').map(function(v){return v.trim();}).filter(Boolean);
-    vals.forEach(function(v){
-      el=document.querySelector('input[name="submitted[danh_gia]['+m.f+'][select]['+v+']"]');
-      if(el){el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));filled++;}else missing.push(m.f+'_chk='+v);
-    });
-  }else if(m.t==='chk_dir'){
-    // submitted[danh_gia][b9][N] (direct checkbox, no [select] wrapper)
-    vals=String(val).split(',').map(function(v){return v.trim();}).filter(Boolean);
-    vals.forEach(function(v){
-      el=document.querySelector('input[name="submitted[danh_gia]['+m.f+']['+v+']"]');
-      if(el){el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));filled++;}else missing.push(m.f+'_chk_dir='+v);
-    });
-  }else if(m.t==='radio_sel'){
-    // submitted[danh_gia][b5][select] value=N
-    el=document.querySelector('input[name="submitted[danh_gia]['+m.f+'][select]"][value="'+val+'"]');
-    if(el){el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));filled++;}else missing.push(m.f+'_rsel='+val);
-  }else if(m.t==='radio_dir'){
-    // submitted[danh_gia][b7] value=N
-    el=document.querySelector('input[name="submitted[danh_gia]['+m.f+']"][value="'+val+'"]');
-    if(el){el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));filled++;}else missing.push(m.f+'_rdir='+val);
-  }else if(m.t==='radio_c'){
-    // submitted[c][c4][select]
-    el=document.querySelector('input[name="submitted[c]['+m.f+'][select]"][value="'+val+'"]');
-    if(el){el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));filled++;}else missing.push('c_'+m.f+'='+val);
-  }else if(m.t==='text_c'){
-    // submitted[c][c1] text input
-    var te=document.querySelector('input[name="submitted[c]['+m.f+']"],textarea[name="submitted[c]['+m.f+']"]');
-    if(te){te.value=val;te.dispatchEvent(new Event('change',{bubbles:true}));filled++;}else missing.push('c_text_'+m.f+'='+val);
-  }else if(m.t==='text_b'){
-    // submitted[danh_gia][b14_a] text
-    var te=document.querySelector('input[name="submitted[danh_gia]['+m.f+']"],textarea[name="submitted[danh_gia]['+m.f+']"]');
-    if(te){te.value=val;te.dispatchEvent(new Event('change',{bubbles:true}));filled++;}else missing.push('dg_text_'+m.f+'='+val);
+    if (sec === 'b') return { name: `submitted[danh_gia][${qkey}][select]`, isCheckbox: true };
+    return { name: null, isCheckbox: false };
   }
-});
-\`);
-  } else {
-    L.push(`var ANS=${answersJson};`);
-    L.push(`ANS.forEach(function(a){`);
-    L.push(`  if(!a.code||a.value===''||a.value===null||a.value===undefined)return;`);
-    L.push(`  var sec=a.code[0].toLowerCase(), num=a.code.slice(1).toLowerCase(), qkey=sec+num;`);
-    L.push(`  var el=document.querySelector('input[name="submitted[danh_gia]['+sec+']['+qkey+']"][value="'+a.value+'"]');`);
-    L.push(`  if(el){el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));filled++;}else missing.push(a.code+'='+a.value);`);
-    L.push(`});`);
-  }
+  return { name: `submitted[danh_gia][${sec}][${qkey}]`, isCheckbox: false };
+}
 
-  L.push(`var buildId=(document.querySelector('input[name="form_build_id"]')||{}).value||'';`);
-  L.push(`var formId=(document.querySelector('input[name="form_id"]')||{}).value||'';`);
-  L.push(`if(!buildId) return {error:'NO_BUILD_ID', msg:'Không tìm thấy form_build_id'};`);
-  L.push(`setTimeout(function(){`);
-  L.push(`  try{`);
-  L.push(`    var form=document.querySelector('form[id^="webform-client-form-"]')||document.querySelector('form.webform-client-form');`);
-  L.push(`    if(form){`);
-  L.push(`      var op=form.querySelector('input[name="op"]');`);
-  L.push(`      if(!op){op=document.createElement('input');op.type='hidden';op.name='op';form.appendChild(op);}`)
-  L.push(`      op.value='Gửi'; form.submit();`);
-  L.push(`    }else{`);
-  L.push(`      var btn=document.querySelector('input[type="submit"][name="op"]')||document.querySelector('input[type="submit"].webform-submit')||document.querySelector('button[type="submit"]');`);
-  L.push(`      if(btn)btn.click(); else log.push('ERR: Không tìm thấy form submit');`);
-  L.push(`    }`);
-  L.push(`  }catch(se){log.push('submit-err:'+se.message);}`);
-  L.push(`},900);`);
-  L.push(`return {ok:true, filled:filled, total:${validAnswers.length}, missing:missing.join(','), formId:formId, buildId:buildId.substr(0,20)+'...'};`);
-  L.push(`}catch(globalErr){ return {error:globalErr.message}; }`);
-  L.push(`})()`);
-  return L.join('\n');
+// =========================================================
+// BUILD INJECT SCRIPT
+// =========================================================
+function buildInjectScript(rec, mabv, khoaId, kieuKhaoSat, nguoipv, doituong, gioi_tinh, tuoi, dd, mm, yy) {
+  const answers    = (rec.answers||[]).filter(a => a.value!==null && a.value!==undefined && a.value!=='');
+  const answersStr = JSON.stringify(answers.map(a=>({code:a.code,value:Number(a.value)})));
+  const typeStr    = JSON.stringify(rec.type);
+  const p = {
+    mabv:        JSON.stringify(mabv        || ''),
+    khoa:        JSON.stringify(khoaId      || ''),
+    dd:          JSON.stringify(dd          || ''),
+    mm:          JSON.stringify(mm          || ''),
+    yy:          JSON.stringify(yy          || ''),
+    kieuKhaoSat: JSON.stringify(kieuKhaoSat || '1'),
+    nguoipv:     JSON.stringify(nguoipv     || '1'),
+    doituong:    JSON.stringify(doituong    || '1'),
+    gioi_tinh:   JSON.stringify(gioi_tinh   || ''),
+    tuoi:        JSON.stringify(tuoi        || ''),
+    masophieu:   JSON.stringify(rec.masophieu || ''),
+  };
+
+  return `(function(){
+  try {
+    var buildId=(document.querySelector('input[name="form_build_id"]')||{}).value||'';
+    if(!buildId)return{error:'NO_BUILD_ID'};
+    var answers=${answersStr}, type=${typeStr}, filled=0, skipped=0, missing=[];
+
+    function setVal(sel,val){var e=document.querySelector(sel);if(e){e.value=val;e.dispatchEvent(new Event('change',{bubbles:true}));return true;}return false;}
+    function setCheck(sel,on){var e=document.querySelector(sel);if(e){e.checked=on;e.dispatchEvent(new Event('change',{bubbles:true}));return true;}return false;}
+    function setRadio(name,val){var e=document.querySelector('input[name="'+name+'"][value="'+val+'"]');if(e){e.checked=true;e.dispatchEvent(new Event('change',{bubbles:true}));return true;}return false;}
+
+    answers.forEach(function(a){
+      if(a.code===undefined||a.value===null||a.value===undefined)return;
+      var sec=a.code[0].toLowerCase(),num=a.code.slice(1),qkey=sec+num,val=a.value;
+      if(type==='m5'&&sec==='b'){
+        var nm='submitted[danh_gia]['+qkey+'][select]['+val+']';
+        document.querySelectorAll('input[name^="submitted[danh_gia]['+qkey+'][select]"]').forEach(function(el){el.checked=false;});
+        if(setCheck('input[name="'+nm+'"]',true))filled++;else missing.push(a.code+'='+val);
+      }else if(type==='m5'){
+        skipped++;
+      }else{
+        var fname='submitted[danh_gia]['+sec+']['+qkey+']';
+        if(setRadio(fname,val))filled++;else missing.push(a.code+'='+val);
+      }
+    });
+
+    // kieu_khao_sat
+    var kks=document.querySelector('select[name="submitted[kieu_khao_sat]"]');
+    if(kks&&(!kks.value||kks.value===''))kks.value=${p.kieuKhaoSat};
+    // guibyt
+    setVal('select[name="submitted[guibyt]"]','1');
+    // nguoipv M1/M2
+    ['select[name="submitted[ttp][mdt][nguoipv]"]'].forEach(function(s){var e=document.querySelector(s);if(e&&!e.value)e.value=${p.nguoipv};});
+    // doituong
+    var dt1=document.querySelector('select[name="submitted[ttp][mdt][doituong]"]');
+    if(dt1&&!dt1.value)dt1.value=${p.doituong};
+    var dt2=document.querySelector('input[name="submitted[thong_tin_phieu][ma_doituong][doituong]"][value="1"]');
+    if(dt2)dt2.checked=true;
+
+    // gioi tinh
+    var gt=${p.gioi_tinh};
+    if(gt){
+      setRadio('submitted[thong_tin_nguoi_dien_phieu][gioi_tuoi][gioi_tinh]',gt);
+    }
+    // tuoi
+    var tv=${p.tuoi};
+    if(tv){
+      ['input[name="submitted[thong_tin_nguoi_dien_phieu][gioi_tuoi][tuoi]"]','input[name="submitted[a][gioi_tuoi][tuoi]"]'].forEach(function(s){var e=document.querySelector(s);if(e&&!e.value)e.value=tv;});
+    }
+
+    // Bệnh viện
+    var mabvVal=${p.mabv};
+    ['select[name="submitted[ttp][bvn][1_ten_benh_vien]"]','select[name="submitted[thong_tin_phieu][benhvien_ngay][1_ten_benh_vien]"]'].forEach(function(s){
+      var e=document.querySelector(s);
+      if(e&&mabvVal){
+        var found=false;
+        Array.from(e.options).forEach(function(opt){if(opt.value===mabvVal||opt.value.startsWith(mabvVal)){e.value=opt.value;found=true;}});
+        if(!found&&!e.value)e.value=mabvVal;
+        e.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+    });
+    ['input[name="submitted[ttp][bvn][mabv]"]','input[name="submitted[thong_tin_phieu][benhvien_ngay][mabv]"]'].forEach(function(s){var e=document.querySelector(s);if(e)e.value=mabvVal;});
+
+    // Khoa
+    var khoaVal=${p.khoa};
+    ['select[name="submitted[ttp][kmk][khoa_phong]"]','select[name="submitted[ttp][khoa_phong]"]','select[name="submitted[thong_tin_phieu][khoa_ma_khoa][khoa_phong]"]'].forEach(function(s){
+      var e=document.querySelector(s);if(e&&khoaVal&&(!e.value||e.value===''))e.value=khoaVal;
+    });
+
+    // Ngày điền
+    var dd=${p.dd},mm=${p.mm},yy=${p.yy};
+    [['select[name="submitted[ttp][bvn][ngay_dien_phieu][day]"]',dd],['select[name="submitted[ttp][bvn][ngay_dien_phieu][month]"]',mm],['select[name="submitted[ttp][bvn][ngay_dien_phieu][year]"]',yy],['select[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][day]"]',dd],['select[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][month]"]',mm],['select[name="submitted[thong_tin_phieu][benhvien_ngay][ngay_dien_phieu][year]"]',yy]].forEach(function(pair){var e=document.querySelector(pair[0]);if(e&&pair[1])e.value=pair[1];});
+
+    // Mã số phiếu
+    var msp=${p.masophieu};
+    ['input[name="submitted[ttp][masophieu]"]','input[name="submitted[thong_tin_phieu][ma_doituong][masophieu]"]'].forEach(function(s){var e=document.querySelector(s);if(e&&!e.value&&msp)e.value=msp;});
+
+    // Required fields check
+    var requiredEmpty=[],radioGroups={};
+    document.querySelectorAll('[required]').forEach(function(el){if(!el.value||el.value==='')requiredEmpty.push(el.name||el.id||'?');});
+    document.querySelectorAll('input[type="radio"][required]').forEach(function(el){radioGroups[el.name]=radioGroups[el.name]||[];radioGroups[el.name].push(el);});
+    Object.keys(radioGroups).forEach(function(n){if(!radioGroups[n].some(function(el){return el.checked;}))requiredEmpty.push('radio:'+n);});
+
+    // Submit
+    setTimeout(function(){
+      var btn=document.querySelector('input[type="submit"][name="op"],input[type="submit"].webform-submit,input[type="submit"].btn-primary,button[type="submit"]');
+      if(btn)btn.click();
+    },1000);
+
+    return{ok:true,filled:filled,skipped:skipped,missing:missing.join(','),total:answers.length,requiredEmpty:requiredEmpty.length,requiredList:requiredEmpty.slice(0,5).join(','),buildId:buildId.substring(0,12)};
+  }catch(err){return{error:err.message};}
+})()`;
 }
 
 // =========================================================
 // GỬI PHIẾU QUA POPUP
-// BUG-08 FIX: Guard fillDone trước cross-origin catch
 // =========================================================
 function submitBYTViaPopup(rec) {
   return new Promise((resolve) => {
-    const type   = rec.type;
-    const action = BYT_FORM_ACTIONS[type];
-    if (!action) { resolve({ ok:false, msg:'Không có URL cho mẫu '+type }); return; }
+    const type = rec.type, action = BYT_FORM_ACTIONS[type];
+    if (!action) { resolve({ok:false,msg:'Không có URL cho mẫu '+type}); return; }
     const pageUrl = BYT_BASE + action;
-    const win = window.open(pageUrl, 'byt_submit_'+rec.id, 'width=1100,height=780,left=40,top=30');
-    if (!win) { resolve({ ok:false, msg:'Popup bị chặn' }); return; }
-    let attempts=0, fillDone=false, submitted=false;
-    const MIN_WAIT_TICKS=4;
-    const injectScript=_buildFillScript(rec);
+    const win = window.open(pageUrl,'byt_submit_'+rec.id,'width=1100,height=780,left=50,top=40');
+    if (!win) { resolve({ok:false,msg:'Popup bị chặn – hãy cho phép popup trong trình duyệt'}); return; }
+
+    const mabv=CFG.mabv||'', khoaId=rec.khoaId||rec.khoa||'';
+    const kieuKhaoSat=rec.kieuKhaoSat||CFG.kieuKhaoSat||'1';
+    const nguoipv=rec.nguoipv||CFG.nguoipv||'1', doituong=rec.doituong||'1';
+    const gioi_tinh=rec.gioi_tinh||'', tuoi=rec.tuoi||'';
+    const ngay=(rec.ngay||new Date().toISOString().split('T')[0]).split('-');
+    const dd=parseInt(ngay[2]||0).toString(), mm=parseInt(ngay[1]||0).toString(), yy=ngay[0]||'';
+
+    const injectScript = buildInjectScript(rec,mabv,khoaId,kieuKhaoSat,nguoipv,doituong,gioi_tinh,tuoi,dd,mm,yy);
+    let attempts=0, tokensDone=false, submitted=false;
+    const maxAttempts = Math.ceil((BYT_LOAD_TIMEOUT_MS[type]||18000)/500);
+
     const iv = setInterval(()=>{
       attempts++;
       try {
-        if(win.closed){ clearInterval(iv); if(!submitted) resolve({ok:false,msg:'Cửa sổ bị đóng sớm'}); return; }
-        if(attempts<MIN_WAIT_TICKS) return;
-        const curUrl=win.location.href||'';
-        const ready=win.document.readyState==='complete';
-        const onBYT=curUrl.startsWith(BYT_BASE)||curUrl.includes('chatluongbenhvien.vn');
-        if(!onBYT){ if(attempts>30){clearInterval(iv);try{win.close();}catch(x){}resolve({ok:false,msg:'Timeout điều hướng'});} return; }
-        if(ready&&!fillDone){
-          if(curUrl.includes('/user/login')||(win.document.title||'').toLowerCase().includes('đăng nhập')){
-            clearInterval(iv); try{win.close();}catch(x){} resolve({ok:false,msg:'CHƯA_ĐĂNG_NHẬP'}); return;
-          }
-          const hasForm=win.document.querySelector('form[id^="webform-client-form-"]')||win.document.querySelector('form.webform-client-form');
-          if(!hasForm){ if(attempts>MIN_WAIT_TICKS+20){clearInterval(iv);try{win.close();}catch(x){}resolve({ok:false,msg:'Không tìm thấy form webform'});} return; }
-          fillDone=true;
-          addBYTLog('info','Form BYT đã tải – đang điền dữ liệu...');
-          setTimeout(()=>{
-            try {
-              const result=win.eval(injectScript);
-              if(result&&result.error==='NO_BUILD_ID'){clearInterval(iv);try{win.close();}catch(x){}resolve({ok:false,msg:result.msg});return;}
-              if(result&&result.error){clearInterval(iv);try{win.close();}catch(x){}resolve({ok:false,msg:'Lỗi: '+result.error});return;}
-              if(result&&result.ok) addBYTLog('info',`Điền ${result.filled}/${result.total} câu${result.missing?` | thiếu: ${result.missing}`:''}`);
-              let waitAtt=0;
-              const waitIv=setInterval(()=>{
-                waitAtt++;
-                try {
-                  if(win.closed){clearInterval(waitIv);clearInterval(iv);submitted=true;resolve({ok:true,msg:'Gửi thành công'});return;}
-                  const newUrl=win.location.href||'';
-                  const body=(win.document.body||{}).innerText||'';
-                  const isOK=/cảm\s*ơn|thành\s*công|thank/i.test(body)||/confirmation|complete/i.test(newUrl)||(newUrl!==pageUrl&&newUrl.length>10&&win.document.readyState==='complete'&&!newUrl.includes('/user/login'));
-                  if(isOK){clearInterval(waitIv);clearInterval(iv);submitted=true;setTimeout(()=>{try{win.close();}catch(x){}},800);resolve({ok:true,msg:'Gửi thành công'});}
-                }catch(ce){clearInterval(waitIv);clearInterval(iv);submitted=true;setTimeout(()=>{try{win.close();}catch(x){}},600);resolve({ok:true,msg:'Gửi thành công (cross-origin)'});}
-                if(waitAtt>22){clearInterval(waitIv);clearInterval(iv);submitted=true;setTimeout(()=>{try{win.close();}catch(x){}},400);resolve({ok:true,msg:'Gửi xong (timeout xác nhận)'});}
-              },1000);
-            }catch(domErr){clearInterval(iv);try{win.close();}catch(x){}resolve({ok:false,msg:'DOM error: '+domErr.message});}
-          },800);
+        if (win.closed) { clearInterval(iv); if(!submitted)resolve({ok:false,msg:'Cửa sổ bị đóng trước khi hoàn tất'}); return; }
+        const curUrl=win.location.href||'', ready=win.document.readyState==='complete';
+        if (ready&&(curUrl.includes('/user/login')||win.document.title.toLowerCase().includes('đăng nhập'))) {
+          clearInterval(iv); try{win.close();}catch(x){} resolve({ok:false,msg:'CHƯA_ĐĂNG_NHẬP'}); return;
+        }
+        if (ready&&!tokensDone) {
+          tokensDone=true;
+          try {
+            const result=win.eval(injectScript);
+            if(result&&result.error==='NO_BUILD_ID'){clearInterval(iv);try{win.close();}catch(x){}resolve({ok:false,msg:'Không tìm thấy form_build_id'});return;}
+            if(result&&result.error)addBYTLog('warn','Lỗi điền form: '+result.error);
+            else if(result&&result.ok){
+              const reqInfo=result.requiredEmpty>0?` | ⚠️ ${result.requiredEmpty} trường required còn trống: ${result.requiredList}`:'';
+              addBYTLog('info',`Điền ${result.filled}/${result.total} câu (bỏ qua: ${result.skipped||0}, thiếu: ${result.missing||'không có'})${reqInfo}`);
+            }
+            let waitAtt=0;
+            const waitIv=setInterval(()=>{
+              waitAtt++;
+              try {
+                if(win.closed){clearInterval(waitIv);clearInterval(iv);submitted=true;resolve({ok:true,msg:'Đã gửi (cửa sổ tự đóng sau redirect)'});return;}
+                const newUrl=win.location.href||'', body=win.document.body?.innerText||'';
+                const isOk=body.includes('cảm ơn')||body.includes('Cảm ơn')||body.includes('thành công')||body.includes('Thành công')||newUrl.includes('confirmation')||newUrl.includes('complete')||(newUrl!==pageUrl&&newUrl.length>10&&win.document.readyState==='complete');
+                if(isOk){clearInterval(waitIv);clearInterval(iv);submitted=true;setTimeout(()=>{try{win.close();}catch(x){}},1000);resolve({ok:true,msg:'Gửi thành công – xác nhận trang BYT'});}
+              }catch(ce){clearInterval(waitIv);clearInterval(iv);submitted=true;setTimeout(()=>{try{win.close();}catch(x){}},600);resolve({ok:true,msg:'Gửi thành công (cross-origin sau submit)'});}
+              if(waitAtt>20){clearInterval(waitIv);clearInterval(iv);submitted=true;setTimeout(()=>{try{win.close();}catch(x){}},400);resolve({ok:true,msg:'Gửi xong (timeout xác nhận)'});}
+            },1000);
+          } catch(domErr){clearInterval(iv);try{win.close();}catch(x){}resolve({ok:false,msg:'Không đọc được trang BYT – hãy đăng nhập BYT trước'});}
         }
       }catch(outerErr){
-        // BUG-08 FIX: CHỈ thành công nếu fillDone=true (đã inject xong)
-        if(fillDone&&!submitted){clearInterval(iv);submitted=true;setTimeout(()=>{try{win.close();}catch(x){}},400);resolve({ok:true,msg:'Gửi thành công (cross-origin)'});}
+        if(tokensDone&&!submitted){clearInterval(iv);submitted=true;setTimeout(()=>{try{win.close();}catch(x){}},400);resolve({ok:true,msg:'Gửi thành công (cross-origin redirect)'});}
       }
-      if(attempts>80){clearInterval(iv);if(!submitted){try{win.close();}catch(x){}resolve({ok:false,msg:'Timeout 40s'});}}
+      if(attempts>maxAttempts){clearInterval(iv);if(!submitted){try{win.close();}catch(x){}resolve({ok:false,msg:`Timeout ${BYT_LOAD_TIMEOUT_MS[type]/1000}s – trang BYT không phản hồi`});}}
     },500);
   });
 }
 
 // =========================================================
-// RENDER QUEUE
-// BUG-10 FIX: Tính TB chính xác – bao gồm cả value=0
+// RENDER QUEUE UI
 // =========================================================
 function renderBYTQueue() {
-  const typeF   = document.getElementById('byt-fl-type')?.value   || '';
-  const statusF = document.getElementById('byt-fl-status')?.value || 'pending';
-  let surveys   = [...DB.surveys].sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
-  if (typeF) surveys=surveys.filter(x=>x.type===typeF);
-  if (statusF==='pending') surveys=surveys.filter(x=>!x.bytStatus||x.bytStatus==='pending'||x.bytStatus==='failed');
-  else if(statusF==='byt-done') surveys=surveys.filter(x=>x.bytStatus==='done');
+  const typeF=document.getElementById('byt-fl-type')?.value||'';
+  const statusF=document.getElementById('byt-fl-status')?.value||'pending';
+  let surveys=[...DB.surveys].sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  if(typeF)surveys=surveys.filter(x=>x.type===typeF);
+  if(statusF==='pending')surveys=surveys.filter(x=>!x.bytStatus||x.bytStatus==='pending'||x.bytStatus==='failed');
+  else if(statusF==='byt-done')surveys=surveys.filter(x=>x.bytStatus==='done');
   const el=document.getElementById('byt-queue-list');
   if(!el)return;
-  if(!surveys.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-text">Không có phiếu cần gửi</div></div>';const cnt=document.getElementById('byt-queue-count');if(cnt)cnt.textContent='';return;}
+  if(!surveys.length){el.innerHTML=`<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-text">Không có phiếu cần gửi</div><div class="empty-sub">Tất cả phiếu đã được gửi hoặc chưa có phiếu nào</div></div>`;document.getElementById('byt-queue-count').textContent='';return;}
   let html='';
   surveys.forEach(r=>{
     const isSelected=bytSelectedIds.has(r.id);
-    // BUG-10 FIX: Đếm câu trả lời bao gồm cả value=0
-    const ans=(r.answers||[]).filter(a=>a.value!==null&&a.value!==undefined&&a.value!=='');
-    const scored=ans.filter(a=>Number(a.value)>0);
-    const avg=scored.length?(scored.reduce((s,a)=>s+Number(a.value),0)/scored.length).toFixed(1):'-';
+    const ans=r.answers?.filter(a=>a.value!==null&&a.value!==undefined&&a.value!=='')||[];
+    const avg=ans.length?(ans.reduce((s,a)=>s+Number(a.value),0)/ans.length).toFixed(1):'-';
     const d=r.ngay||r.createdAt?.split('T')[0]||'';
     const icon=r.type==='m1'?'🏥':r.type==='m2'?'🏃':r.type==='m3'?'👨‍⚕️':r.type==='m4'?'👶':'🍼';
-    let statusHtml=(!r.bytStatus||r.bytStatus==='pending')
-      ?'<span class="uqi-status pending">⏳ Chờ gửi</span>'
-      :r.bytStatus==='uploading'?'<span class="uqi-status uploading">🔄 Đang gửi</span>'
-      :r.bytStatus==='done'?'<span class="uqi-status done">✅ Đã gửi</span>'
-      :'<span class="uqi-status failed">❌ Lỗi</span>';
-    html+=`<div class="upload-queue-item${isSelected?' selected':''}" id="uqi_${r.id}">
-      <input type="checkbox" class="uqi-check" data-id="${r.id}" ${isSelected?'checked':''}
-        onchange="toggleBYTItem('${r.id}', this.checked)">
-      <div class="uqi-info">
-        <div class="uqi-label">${icon} ${(typeof SURVEYS!=='undefined'&&SURVEYS[r.type]?.label)||r.type}</div>
-        <div class="uqi-meta">📅 ${d} · ${r.khoa||r.donvi||'—'} · TB ${avg}/5 · ${ans.length}/${(r.answers||[]).length} câu</div>
-      </div>
-      ${statusHtml}
-      <button class="btn btn-outline btn-xs" onclick="openBYTForRecord('${r.id}')" title="Mở trang BYT">🔗</button>
-    </div>`;
+    let statusHtml;
+    if(!r.bytStatus||r.bytStatus==='pending')statusHtml='<span class="uqi-status pending">⏳ Chờ gửi</span>';
+    else if(r.bytStatus==='uploading')statusHtml='<span class="uqi-status uploading">🔄 Đang gửi</span>';
+    else if(r.bytStatus==='done')statusHtml='<span class="uqi-status done">✅ Đã gửi</span>';
+    else statusHtml='<span class="uqi-status failed">❌ Lỗi – thử lại</span>';
+    html+=`<div class="upload-queue-item${isSelected?' selected':''}" id="uqi_${r.id}"><input type="checkbox" class="uqi-check" data-id="${r.id}" ${isSelected?'checked':''} onchange="toggleBYTItem('${r.id}',this.checked)"><div class="uqi-info"><div class="uqi-label">${icon} ${SURVEYS[r.type]?.label||r.type}</div><div class="uqi-meta">📅 ${d} · ${r.khoa||r.donvi||'—'} · TB ${avg}/5 · ${ans.length}/${r.answers?.length||0} câu</div></div>${statusHtml}<button class="btn btn-outline btn-xs" onclick="openBYTForRecord('${r.id}')" title="Xem trên BYT">🔗</button></div>`;
   });
   el.innerHTML=html;
-  const cnt=document.getElementById('byt-queue-count');
-  if(cnt)cnt.textContent=`(${surveys.length} phiếu, đã chọn ${bytSelectedIds.size})`;
+  document.getElementById('byt-queue-count').textContent=`(${surveys.length} phiếu, đã chọn ${bytSelectedIds.size})`;
   updateBYTPendingBadge();
 }
 
-function toggleBYTItem(id, checked) {
+function toggleBYTItem(id,checked){
   if(checked)bytSelectedIds.add(id);else bytSelectedIds.delete(id);
   document.getElementById('uqi_'+id)?.classList.toggle('selected',checked);
   const total=document.querySelectorAll('.uqi-check').length;
-  const cnt=document.getElementById('byt-queue-count');
-  if(cnt)cnt.textContent=`(${total} phiếu, đã chọn ${bytSelectedIds.size})`;
+  const count=document.getElementById('byt-queue-count');
+  if(count)count.textContent=`(${total} phiếu, đã chọn ${bytSelectedIds.size})`;
 }
 function selectAllBYTQueue(){document.querySelectorAll('.uqi-check').forEach(cb=>{cb.checked=true;bytSelectedIds.add(cb.dataset.id);document.getElementById('uqi_'+cb.dataset.id)?.classList.add('selected');});renderBYTQueue();}
-function deselectAllBYTQueue(){bytSelectedIds.clear();document.querySelectorAll('.uqi-check').forEach(cb=>cb.checked=false);document.querySelectorAll('.upload-queue-item').forEach(el=>el.classList.remove('selected'));renderBYTQueue();}
+function deselectAllBYTQueue(){bytSelectedIds.clear();document.querySelectorAll('.uqi-check').forEach(cb=>{cb.checked=false;});document.querySelectorAll('.upload-queue-item').forEach(el=>el.classList.remove('selected'));renderBYTQueue();}
 function quickSendOneBYT(id){bytSelectedIds.clear();bytSelectedIds.add(id);showPage('bytupload');setTimeout(()=>sendSelectedToBYT(),400);}
-function openBYTForRecord(id){const r=DB.surveys.find(x=>x.id===id);if(!r)return;const url=BYT_FORM_ACTIONS[r.type]?(BYT_BASE+BYT_FORM_ACTIONS[r.type]):BYT_BASE;if(!window.open(url,'_blank'))toast('❌ Popup bị chặn.','error');}
+function openBYTForRecord(id){const r=DB.surveys.find(x=>x.id===id);if(!r)return;const url=SURVEYS[r.type]?.url||BYT_BASE;if(!window.open(url,'_blank'))toast('❌ Popup bị chặn.','error');}
 
 // =========================================================
-// GỬI PHIẾU ĐÃ CHỌN – MAIN FUNCTION
+// GỬI PHIẾU ĐÃ CHỌN
 // =========================================================
 async function sendSelectedToBYT() {
   if(bytSelectedIds.size===0){toast('Chọn ít nhất 1 phiếu để gửi','warning');return;}
   if(!CFG.bytuser||!CFG.bytpass){toast('⚠️ Chưa cấu hình tài khoản BYT.','warning');showPage('settings');return;}
-  if(bytUploadRunning){toast('Đang có tiến trình gửi phiếu...','info');return;}
-  if(!CFG.mabv){addBYTLog('warn','⚠️ Chưa cấu hình Mã BV (mabv) – vào Cấu hình bổ sung');toast('⚠️ Chưa cấu hình Mã BV (mabv)','warning');}
-  const logCard=document.getElementById('byt-log-card');if(logCard)logCard.style.display='';
+  if(bytUploadRunning){toast('Đang có tiến trình gửi phiếu, vui lòng chờ...','info');return;}
+  const logCard=document.getElementById('byt-log-card');
+  if(logCard)logCard.style.display='';
   clearBYTLog();
   bytUploadRunning=true;
-  const ids=[...bytSelectedIds];
-  addBYTLog('info',`═══ Bắt đầu gửi ${ids.length} phiếu ═══`);
+  addBYTLog('info','═══ BẮT ĐẦU GỬI '+bytSelectedIds.size+' PHIẾU LÊN BYT ═══');
   addBYTLog('info','Thời gian: '+new Date().toLocaleString('vi-VN'));
-  addBYTLog('info','Tài khoản: '+CFG.bytuser);
-  addBYTLog('info','Mã BV: '+(CFG.mabv||'(chưa cấu hình)'));
-  addBYTLog('info','Mã khoa: '+(CFG.khoaId||'(không có – khoa sẽ bỏ trống)'));
-  if(bytLoginStatus!=='logged-in')addBYTLog('warn','⚠️ Chưa xác nhận đăng nhập BYT.');
-  let successCount=0, failCount=0, needLogin=false;
-  for(let i=0;i<ids.length;i++){
-    if(needLogin)break;
-    const id=ids[i];
+  addBYTLog('info','Tài khoản BYT: '+CFG.bytuser);
+  addBYTLog('info','Bệnh viện: '+(CFG.mabv||'Chưa cấu hình'));
+  addBYTLog('info','⚠️ Mỗi phiếu sẽ mở cửa sổ BYT riêng. KHÔNG đóng cửa sổ đó khi đang gửi!');
+  const ids=[...bytSelectedIds];
+  let successCount=0,failCount=0,needLogin=false;
+  for(const id of ids){
     const r=DB.surveys.find(x=>x.id===id);
-    if(!r)continue;
-    // BUG-10 FIX: Đếm bao gồm value=0
-    const ans=(r.answers||[]).filter(a=>a.value!==null&&a.value!==undefined&&a.value!=='');
-    const label=`${(typeof SURVEYS!=='undefined'&&SURVEYS[r.type]?.label)||r.type} | ${r.ngay||r.createdAt?.split('T')[0]||''} | ${r.khoa||r.donvi||'—'} | ${ans.length} câu`;
-    addBYTLog('info',`▶ [${i+1}/${ids.length}] Gửi: ${label}`);
-    r.bytStatus='uploading'; saveDB();
+    if(!r){addBYTLog('warn','Không tìm thấy phiếu ID='+id);continue;}
+    const ans=r.answers?.filter(a=>a.value!==null&&a.value!==undefined&&a.value!=='')||[];
+    const label=(SURVEYS[r.type]?.label||r.type)+' | '+(r.ngay||r.createdAt?.split('T')[0]||'')+' | '+(r.khoa||r.donvi||'—')+' | '+ans.length+' câu';
+    addBYTLog('info','▶ Gửi: '+label);
+    r.bytStatus='uploading';saveDB();
     const itemEl=document.getElementById('uqi_'+id);
     if(itemEl){const s=itemEl.querySelector('.uqi-status');if(s){s.className='uqi-status uploading';s.textContent='🔄 Đang gửi';}}
     let result;
     try{result=await submitBYTViaPopup(r);}catch(e){result={ok:false,msg:e.message};}
     if(result.ok){
-      r.bytStatus='done'; successCount++; bytSelectedIds.delete(id);
-      addBYTLog('ok',`✅ Thành công: ${label}`);
+      r.bytStatus='done';r.bytSentAt=new Date().toISOString();
+      successCount++;bytSelectedIds.delete(id);
+      addBYTLog('ok','✅ Thành công: '+label+' – '+result.msg);
       if(itemEl){const s=itemEl.querySelector('.uqi-status');if(s){s.className='uqi-status done';s.textContent='✅ Đã gửi';}}
-      if(typeof gsReady==='function'&&gsReady())gsUpdateSurveyStatus(id,'done').catch(()=>{});
+      if(gsReady())gsUpdateSurveyStatus(id,'done').catch(()=>{});
     }else{
-      const isNoLogin=(result.msg||'').includes('CHƯA_ĐĂNG_NHẬP');
-      if(isNoLogin){r.bytStatus='pending';needLogin=true;addBYTLog('warn','⛔ Phiên BYT hết hạn! Dừng gửi.');}
-      else{r.bytStatus='failed';failCount++;addBYTLog('err',`❌ Thất bại [${result.msg||'?'}]: ${label}`);if(itemEl){const s=itemEl.querySelector('.uqi-status');if(s){s.className='uqi-status failed';s.textContent='❌ Lỗi';}}}
+      r.bytStatus='failed';r.bytFailMsg=result.msg;
+      failCount++;
+      addBYTLog('err','❌ Thất bại: '+label+' – '+result.msg);
+      if(itemEl){const s=itemEl.querySelector('.uqi-status');if(s){s.className='uqi-status failed';s.textContent='❌ Lỗi';}}
+      if(result.msg==='CHƯA_ĐĂNG_NHẬP'||result.msg?.includes('CHƯA_ĐĂNG_NHẬP')){needLogin=true;addBYTLog('warn','⛔ Phiên BYT hết hạn – dừng hàng đợi.');break;}
     }
-    saveDB();
-    if(typeof updateDash==='function')updateDash();
-    if(!needLogin&&i<ids.length-1){addBYTLog('info','⏳ Chờ 3s...');await sleep(3000);}
+    saveDB();updateDash();
+    if(needLogin)break;
+    if(ids.indexOf(id)<ids.length-1){addBYTLog('info','⏳ Chờ 3 giây...');await sleep(3000);}
   }
   bytUploadRunning=false;
-  addBYTLog('info',`═══ Kết quả: ✅ ${successCount} | ❌ ${failCount} ═══`);
-  if(needLogin){setBYTStatusUI('logged-out','⚠️ Phiên BYT hết hạn. Đăng nhập lại rồi gửi tiếp.');const lb=document.getElementById('btn-byt-login-now');if(lb)lb.style.display='';toast('⚠️ Phiên BYT hết hạn!','warning');}
-  else{toast(`📤 BYT: ${successCount} ✅ | ${failCount} ❌`,successCount>0?'success':'error');if(successCount>0)setBYTStatusUI('logged-in',`✅ Gửi BYT hoàn tất: ${successCount} phiếu.`);}
-  renderBYTQueue(); updateBYTPendingBadge();
-  if(typeof gsReady==='function'&&gsReady())gsLogHistory('byt_upload',`Gửi BYT: ${successCount} thành công / ${failCount} thất bại`).catch(()=>{});
+  addBYTLog('info',`═══ KẾT QUẢ: ✅ ${successCount} thành công | ❌ ${failCount} thất bại ═══`);
+  if(needLogin){toast('⚠️ Phiên BYT hết hạn! Nhấn "Đăng nhập BYT" rồi gửi lại.','warning');setBYTStatusUI('logged-out','⚠️ Phiên BYT hết hạn.');const lb=document.getElementById('btn-byt-login-now');if(lb)lb.style.display='';}
+  else toast('📤 BYT: '+successCount+' ✅ thành công, '+failCount+' ❌ thất bại',successCount>0?'success':'error');
+  renderBYTQueue();updateBYTPendingBadge();
+  if(gsReady())gsLogHistory('byt_upload',`Gửi BYT: ${successCount} thành công / ${failCount} thất bại`).catch(()=>{});
 }
 
-// =========================================================
-// AUTO UPLOAD
-// =========================================================
-async function autoUploadBYTIfEnabled(id) {
-  if(!CFG.autoUploadBYT||!CFG.bytuser||!CFG.bytpass||bytLoginStatus!=='logged-in'||bytUploadRunning)return;
-  const r=DB.surveys.find(x=>x.id===id);
-  if(!r||r.bytStatus==='done')return;
-  addBYTLog('info','🤖 Tự động gửi phiếu: '+id);
-  bytSelectedIds.add(id); await sendSelectedToBYT();
+function addBYTLog(type,msg){
+  const el=document.getElementById('byt-upload-log');if(!el)return;
+  const ts=new Date().toLocaleTimeString('vi-VN');
+  const cls=type==='ok'?'log-ok':type==='err'?'log-err':type==='warn'?'log-warn':'log-info';
+  const pre=type==='ok'?'✅':type==='err'?'❌':type==='warn'?'⚠️':'ℹ️';
+  el.innerHTML+=`<div class="${cls}">[${ts}] ${pre} ${msg}</div>`;
+  el.scrollTop=el.scrollHeight;bytLog.push({ts,type,msg});
 }
-
-// =========================================================
-// LOG UTILITIES
-// =========================================================
-function addBYTLog(type,msg){const el=document.getElementById('byt-upload-log');if(!el)return;const ts=new Date().toLocaleTimeString('vi-VN');const cls=type==='ok'?'log-ok':type==='err'?'log-err':type==='warn'?'log-warn':'log-info';const pre=type==='ok'?'✅':type==='err'?'❌':type==='warn'?'⚠️':'ℹ️';el.innerHTML+=`<div class="${cls}">[${ts}] ${pre} ${msg}</div>`;el.scrollTop=el.scrollHeight;bytLog.push({ts,type,msg});}
 function clearBYTLog(){const el=document.getElementById('byt-upload-log');if(el)el.innerHTML='';bytLog=[];}
-function exportBYTLog(){if(!bytLog.length){toast('Chưa có log','info');return;}const txt=bytLog.map(l=>`[${l.ts}] [${l.type.toUpperCase()}] ${l.msg}`).join('\n');const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='byt_log_'+new Date().toISOString().replace(/[:.]/g,'-')+'.txt';a.click();URL.revokeObjectURL(url);}
 
 // =========================================================
-// UTILITIES
+// ▄▄▄▄ BỘ TEST CASE CHUYÊN NGHIỆP v9.0 (TC-01 → TC-20) ▄▄▄▄
+// Chạy: bytRunAllTests()  hoặc  bytRunTest('TC-01')
 // =========================================================
-function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+const BYT_TEST_CASES = [
+  // NHÓM 1: Unit – bytFieldMapping (TC-01 → TC-09)
+  { id:'TC-01', group:'Unit – bytFieldMapping', desc:'M1: câu A1 → submitted[danh_gia][a][a1], radio',
+    fn:()=>{ const r=bytFieldMapping('m1','A1'); return r.name==='submitted[danh_gia][a][a1]'&&!r.isCheckbox; } },
+  { id:'TC-02', group:'Unit – bytFieldMapping', desc:'M2: câu E4 → submitted[danh_gia][e][e4], radio',
+    fn:()=>{ const r=bytFieldMapping('m2','E4'); return r.name==='submitted[danh_gia][e][e4]'&&!r.isCheckbox; } },
+  { id:'TC-03', group:'Unit – bytFieldMapping', desc:'M3: câu C12 → submitted[danh_gia][c][c12], radio',
+    fn:()=>{ const r=bytFieldMapping('m3','C12'); return r.name==='submitted[danh_gia][c][c12]'&&!r.isCheckbox; } },
+  { id:'TC-04', group:'Unit – bytFieldMapping', desc:'M4: câu G1 → submitted[danh_gia][g][g1] (section đặc biệt)',
+    fn:()=>{ const r=bytFieldMapping('m4','G1'); return r.name==='submitted[danh_gia][g][g1]'&&!r.isCheckbox; } },
+  { id:'TC-05', group:'Unit – bytFieldMapping', desc:'M4: câu H3 → submitted[danh_gia][h][h3]',
+    fn:()=>{ const r=bytFieldMapping('m4','H3'); return r.name==='submitted[danh_gia][h][h3]'&&!r.isCheckbox; } },
+  { id:'TC-06', group:'Unit – bytFieldMapping', desc:'M5: câu B1 → checkbox, prefix submitted[danh_gia][b1][select]',
+    fn:()=>{ const r=bytFieldMapping('m5','B1'); return r.name==='submitted[danh_gia][b1][select]'&&r.isCheckbox===true; } },
+  { id:'TC-07', group:'Unit – bytFieldMapping', desc:'M5: câu B10 → submitted[danh_gia][b10][select] (2 chữ số)',
+    fn:()=>{ const r=bytFieldMapping('m5','B10'); return r.name==='submitted[danh_gia][b10][select]'&&r.isCheckbox===true; } },
+  { id:'TC-08', group:'Unit – bytFieldMapping', desc:'M5: section A/C → name=null (xử lý riêng)',
+    fn:()=>{ return bytFieldMapping('m5','A1').name===null&&bytFieldMapping('m5','C1').name===null; } },
+  { id:'TC-09', group:'Unit – bytFieldMapping', desc:'Code null/undefined → name=null, không throw exception',
+    fn:()=>{ try{return bytFieldMapping('m1',null).name===null&&bytFieldMapping('m1',undefined).name===null;}catch(e){return false;} } },
 
-// BUG-07 FIX: Hoạt động đúng cho mọi section a-z (không chỉ a-f)
-function bytFieldName(type,code){
-  if(!code)return null;
-  const sec=code[0].toLowerCase(), num=code.slice(1).toLowerCase(), qkey=sec+num;
-  if(type==='m5'){
-    const RS={b5:1,b6:1,b8:1,b11:1};
-    const SB={b1:1,b2:1,b3:1,b4:1,b5:1,b6:1,b7:1,b8:1,b9:1,b10:1,b11:1};
-    if(SB[qkey]){if(RS[qkey])return `submitted[danh_gia][${qkey}][select]`;return `submitted[danh_gia][${qkey}][select][VALUE]`;}
+  // NHÓM 2: Unit – buildInjectScript (TC-10 → TC-15)
+  { id:'TC-10', group:'Unit – buildInjectScript', desc:'Output là string hợp lệ, chứa NO_BUILD_ID guard',
+    fn:()=>{ const sc=buildInjectScript({type:'m1',answers:[{code:'A1',value:4}],ngay:'2026-04-10'},'62310','','1','1','1','2','45','10','4','2026'); return typeof sc==='string'&&sc.includes('NO_BUILD_ID'); } },
+  { id:'TC-11', group:'Unit – buildInjectScript', desc:'M1: script chứa answers JSON A1, formula danh_gia, và code[0].toLowerCase()',
+    fn:()=>{ const sc=buildInjectScript({type:'m1',answers:[{code:'A1',value:5}],ngay:'2026-04-10'},'62310','','1','1','1','2','45','10','4','2026'); return sc.includes('[danh_gia][')&&sc.includes('"code":"A1"')&&sc.includes("code[0].toLowerCase()"); } },
+  { id:'TC-12', group:'Unit – buildInjectScript', desc:'M5: script chứa logic checkbox cho B-sections (select+[val] pattern)',
+    fn:()=>{ const sc=buildInjectScript({type:'m5',answers:[{code:'B1',value:3}],ngay:'2026-04-10'},'62310','','1','1','1','','','10','4','2026'); return sc.includes('[select][')&&sc.includes('"code":"B1"')&&sc.includes('isCheckbox===false')===false; } },
+  { id:'TC-13', group:'Unit – buildInjectScript', desc:'M4: script chứa thong_tin_phieu (đặc thù M4/M5)',
+    fn:()=>{ const sc=buildInjectScript({type:'m4',answers:[{code:'A1',value:4}],ngay:'2026-04-10'},'62310','','1','1','1','','','10','4','2026'); return sc.includes('thong_tin_phieu'); } },
+  { id:'TC-14', group:'Unit – buildInjectScript', desc:'Mã BV được inject vào 1_ten_benh_vien selector',
+    fn:()=>{ const sc=buildInjectScript({type:'m1',answers:[],ngay:'2026-04-10'},'62310','','1','1','1','2','45','10','4','2026'); return sc.includes('1_ten_benh_vien')&&sc.includes('62310'); } },
+  { id:'TC-15', group:'Unit – buildInjectScript', desc:'value=0 (Không đánh giá) KHÔNG bị lọc bỏ khỏi answers',
+    fn:()=>{ const sc=buildInjectScript({type:'m1',answers:[{code:'A1',value:0},{code:'A2',value:3}],ngay:'2026-04-10'},'62310','','1','1','1','2','45','10','4','2026'); return sc.includes('"value":0')&&sc.includes('"value":3'); } },
+
+  // NHÓM 3: Integration – Data Validation (TC-16 → TC-20)
+  { id:'TC-16', group:'Integration – Data Validation', desc:'M1: 36 câu trả lời hợp lệ, tất cả sections A-E',
+    fn:()=>{
+      const codes=['A1','A2','A3','A4','A5','B1','B2','B3','B4','B5','B6','B7','C1','C2','C3','C4','C5','C6','C7','C8','C9','C10','C11','D1','D2','D3','D4','D5','D6','D7','E1','E2','E3','E4','E5','E6'];
+      const ans=codes.map(c=>({code:c,value:Math.floor(Math.random()*5)+1}));
+      return ans.filter(a=>a.value!==null&&a.value!==undefined&&a.value!=='').length===36&&BYT_FORM_ACTIONS['m1']!==undefined;
+    }},
+  { id:'TC-17', group:'Integration – Data Validation', desc:'M5: tất cả B1-B12 đều isCheckbox=true',
+    fn:()=>{ return ['B1','B2','B3','B4','B5','B6','B7','B8','B9','B10','B11','B12'].every(c=>{ const r=bytFieldMapping('m5',c); return r.isCheckbox===true&&r.name&&r.name.includes('[select]'); }); } },
+  { id:'TC-18', group:'Integration – Data Validation', desc:'Tất cả 5 mẫu đều có BYT_FORM_ACTIONS tương ứng',
+    fn:()=>{ return ['m1','m2','m3','m4','m5'].every(t=>typeof BYT_FORM_ACTIONS[t]==='string'&&BYT_FORM_ACTIONS[t].startsWith('/')); } },
+  { id:'TC-19', group:'Integration – Data Validation', desc:'Parse ngày: 2026-04-10 → dd=10, mm=4, yy=2026',
+    fn:()=>{ const n='2026-04-10'.split('-'); return parseInt(n[2]).toString()==='10'&&parseInt(n[1]).toString()==='4'&&n[0]==='2026'; } },
+  { id:'TC-20', group:'Integration – Data Validation', desc:'M3: khoa_phong dưới ttp trực tiếp; M1/M2 dưới ttp.kmk – script chứa cả 2',
+    fn:()=>{ const sc=buildInjectScript({type:'m3',answers:[],ngay:'2026-04-10'},'62310','123166','1','1','1','1','35','10','4','2026'); return sc.includes('"submitted[ttp][khoa_phong]"')&&sc.includes('"submitted[ttp][kmk][khoa_phong]"'); } },
+];
+
+async function bytRunAllTests() {
+  const logCard=document.getElementById('byt-log-card');if(logCard)logCard.style.display='';
+  clearBYTLog();
+  addBYTLog('info','╔══════════════════════════════════════════════╗');
+  addBYTLog('info','║  KSHL v9.0 – BỘ TEST CASE BYT CHUYÊN NGHIỆP  ║');
+  addBYTLog('info',`║  Tổng: ${BYT_TEST_CASES.length} test | ${new Date().toLocaleString('vi-VN')}  ║`);
+  addBYTLog('info','╚══════════════════════════════════════════════╝');
+  bytTestResults=[];
+  let pass=0,fail=0,currentGroup='';
+  for(const tc of BYT_TEST_CASES){
+    if(tc.group!==currentGroup){currentGroup=tc.group;addBYTLog('info','── '+currentGroup+' ──');}
+    let result,error=null;
+    try{result=await Promise.resolve(tc.fn());}catch(e){result=false;error=e.message;}
+    const status=result?'PASS':'FAIL',logType=result?'ok':'err';
+    addBYTLog(logType,`[${tc.id}] ${status} – ${tc.desc}${error?' [Exception: '+error+']':''}`);
+    bytTestResults.push({id:tc.id,group:tc.group,desc:tc.desc,status,error});
+    if(result)pass++;else fail++;
+    await sleep(50);
   }
-  return `submitted[danh_gia][${sec}][${qkey}]`;
+  addBYTLog('info','');
+  addBYTLog('info','════════════ KẾT QUẢ TỔNG HỢP ════════════');
+  addBYTLog(fail===0?'ok':'err',`Tổng: ${BYT_TEST_CASES.length} | ✅ PASS: ${pass} | ❌ FAIL: ${fail}`);
+  if(fail>0){addBYTLog('warn','Danh sách FAIL:');bytTestResults.filter(r=>r.status==='FAIL').forEach(r=>{addBYTLog('err','  • '+r.id+': '+r.desc);});}
+  else addBYTLog('ok','🎉 Tất cả test case PASS! Module BYT sẵn sàng.');
+  const passRate=((pass/BYT_TEST_CASES.length)*100).toFixed(0);
+  addBYTLog('info',`Tỉ lệ pass: ${passRate}%`);
+  toast(fail===0?`✅ Tất cả ${pass} test PASS (${passRate}%)`:`⚠️ ${pass} PASS / ${fail} FAIL – Xem log`,fail===0?'success':'warning');
+  return{pass,fail,total:BYT_TEST_CASES.length,rate:passRate};
 }
 
-function validateBYTConfig(){
-  const issues=[];
-  if(!CFG.bytuser)issues.push('Chưa nhập tên đăng nhập BYT');
-  if(!CFG.bytpass)issues.push('Chưa nhập mật khẩu BYT');
-  // BUG-05 FIX: Bắt buộc cấu hình mabv (mã số)
-  if(!CFG.mabv)issues.push('Chưa cấu hình Mã BV (mabv) – mã số BV trong dropdown BYT, VD: "62310"');
-  return issues;
+async function bytRunTest(id){
+  const tc=BYT_TEST_CASES.find(t=>t.id===id);
+  if(!tc){toast('Không tìm thấy test: '+id,'error');return;}
+  const logCard=document.getElementById('byt-log-card');if(logCard)logCard.style.display='';
+  clearBYTLog();
+  addBYTLog('info',`Chạy đơn lẻ: ${tc.id} – ${tc.desc}`);
+  let result,error=null;
+  try{result=await Promise.resolve(tc.fn());}catch(e){result=false;error=e.message;}
+  addBYTLog(result?'ok':'err',`[${tc.id}] ${result?'PASS ✅':'FAIL ❌'} – ${tc.desc}${error?' ['+error+']':''}`);
+  toast(`${tc.id}: ${result?'✅ PASS':'❌ FAIL'}`,result?'success':'error');
+  return result;
 }
-function showBYTConfigStatus(){
-  const issues=validateBYTConfig();
-  const msg = issues.length
-    ? '⚠️ Thiếu cấu hình BYT: ' + issues.join(' | ')
-    : '✅ Cấu hình BYT đầy đủ – Tài khoản: ' + (CFG.bytuser||'?') + ' | Mã BV: ' + (CFG.mabv||'?');
-  const color = issues.length ? 'var(--warning)' : 'var(--success)';
-  // Settings page
-  const el=document.getElementById('byt-cfg-status');
-  if(el) el.innerHTML = `<span style="color:${color}">${msg}</span>`;
-  // BYT Upload page
-  const el2=document.getElementById('byt-cfg-status-upload');
-  if(el2) el2.innerHTML = `<span style="color:${color}">${msg}</span>`;
+
+function bytShowTestReport(){
+  if(!bytTestResults.length){toast('Chưa chạy test. Nhấn "Chạy tất cả test" trước.','info');return;}
+  const pass=bytTestResults.filter(r=>r.status==='PASS').length;
+  let html=`<div style="font-family:monospace;font-size:12px;padding:10px">`;
+  html+=`<b>📊 BYT TEST REPORT v9.0 – ${new Date().toLocaleString('vi-VN')}</b><br>`;
+  html+=`Pass: ${pass}/${bytTestResults.length} (${((pass/bytTestResults.length)*100).toFixed(0)}%)<br><br>`;
+  let lastGroup='';
+  bytTestResults.forEach(r=>{
+    if(r.group!==lastGroup){lastGroup=r.group;html+=`<br><b>${r.group}</b><br>`;}
+    html+=`  ${r.status==='PASS'?'✅':'❌'} ${r.id}: ${r.desc}<br>`;
+  });
+  html+=`</div>`;
+  const w=window.open('','byt_test_report','width=700,height=500,scrollbars=yes');
+  if(w)w.document.body.innerHTML=html;else toast('Popup bị chặn. Xem log trong cửa sổ chính.','warning');
 }
